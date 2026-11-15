@@ -104,6 +104,7 @@ public class GSettingsConfigurationEngine : ConfigurationEngine, GLib.Object {
         schema_names[ConfigurableProperty.SLIDESHOW_SHOW_TITLE] = SLIDESHOW_PREFS_SCHEMA_NAME;
         schema_names[ConfigurableProperty.USE_24_HOUR_TIME] = UI_PREFS_SCHEMA_NAME;
         schema_names[ConfigurableProperty.USE_LOWERCASE_FILENAMES] = FILES_PREFS_SCHEMA_NAME;
+        schema_names[ConfigurableProperty.USE_SOURCE_FOLDER_AS_EVENT_NAME] = FILES_PREFS_SCHEMA_NAME;
         schema_names[ConfigurableProperty.VIDEO_INTERPRETER_STATE_COOKIE] = VIDEO_SCHEMA_NAME;
         
         key_names = new string[ConfigurableProperty.NUM_PROPERTIES];
@@ -179,6 +180,7 @@ public class GSettingsConfigurationEngine : ConfigurationEngine, GLib.Object {
         key_names[ConfigurableProperty.SLIDESHOW_SHOW_TITLE] = "show-title";
         key_names[ConfigurableProperty.USE_24_HOUR_TIME] = "use-24-hour-time";
         key_names[ConfigurableProperty.USE_LOWERCASE_FILENAMES] = "use-lowercase-filenames";
+        key_names[ConfigurableProperty.USE_SOURCE_FOLDER_AS_EVENT_NAME] = "use-source-folder-as-event-name";
         key_names[ConfigurableProperty.VIDEO_INTERPRETER_STATE_COOKIE] = "interpreter-state-cookie";
     }
 

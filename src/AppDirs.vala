@@ -168,8 +168,16 @@ class AppDirs {
         return get_home_dir().get_child(_("Pictures"));
     }
     
+    // Token in the directory pattern that is replaced with the name of the imported file's
+    // parent directory (e.g. the event folder). Unlike %-symbols it survives DateTime.format()
+    // unchanged, so it can be substituted afterwards.
+    public const string EVENT_DIR_TOKEN = "@event@";
+    private const string FALLBACK_EVENT_DIR = "event";
+
     // Library folder + photo folder, based on user's preferred directory pattern.
-    public static File get_baked_import_dir(time_t tm) {
+    // If source is non-null, EVENT_DIR_TOKEN in the pattern is replaced with the basename
+    // of the source file's parent directory.
+    public static File get_baked_import_dir(time_t tm, File? source = null) {
         string? pattern = Config.Facade.get_instance().get_directory_pattern();
         if (is_string_empty(pattern))
             pattern = Config.Facade.get_instance().get_directory_pattern_custom();
@@ -177,7 +185,20 @@ class AppDirs {
             pattern = "%Y" + Path.DIR_SEPARATOR_S + "%m" + Path.DIR_SEPARATOR_S + "%d"; // default
             
         DateTime date = new DateTime.from_unix_local(tm);
-        return File.new_for_path(get_import_dir().get_path() + Path.DIR_SEPARATOR_S + date.format(pattern));
+        string rel_path = date.format(pattern);
+        if (rel_path.contains(EVENT_DIR_TOKEN)) {
+            File? parent = (source != null) ? source.get_parent() : null;
+            string event_dir = (parent != null) ? sanitize_path_component(parent.get_basename()) : "";
+            if (is_string_empty(event_dir))
+                event_dir = FALLBACK_EVENT_DIR;
+            rel_path = rel_path.replace(EVENT_DIR_TOKEN, event_dir);
+        }
+        return File.new_for_path(get_import_dir().get_path() + Path.DIR_SEPARATOR_S + rel_path);
+    }
+
+    // Make a string safe to use as a single path component.
+    private static string sanitize_path_component(string name) {
+        return name.replace("/", "_").replace("\\", "_").strip();
     }
     
     // Returns true if the File is in or is equal to the library/import directory.

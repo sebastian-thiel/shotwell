@@ -54,7 +54,7 @@
                   </object>
                   <packing>
                     <property name="left_attach">1</property>
-                    <property name="top_attach">14</property>
+                    <property name="top_attach">15</property>
                   </packing>
                 </child>
                 <child>
@@ -191,6 +191,24 @@
                   </packing>
                 </child>
                 <child>
+                  <object class="GtkCheckButton" id="use_source_folder_as_event_name">
+                    <property name="label" translatable="yes">Use source _folder name as event name</property>
+                    <property name="visible">True</property>
+                    <property name="can_focus">True</property>
+                    <property name="receives_default">False</property>
+                    <property name="halign">start</property>
+                    <property name="margin_left">10</property>
+                    <property name="use_underline">True</property>
+                    <property name="draw_indicator">True</property>
+                    <property name="tooltip_text" translatable="yes">Name events after the folder the photos were imported from (e.g. Pictures/2024/Birthday creates an event &quot;Birthday&quot;) instead of the exposure date</property>
+                  </object>
+                  <packing>
+                    <property name="left_attach">0</property>
+                    <property name="top_attach">11</property>
+                    <property name="width">2</property>
+                  </packing>
+                </child>
+                <child>
                   <object class="GtkLabel" id="label10">
                     <property name="visible">True</property>
                     <property name="can_focus">False</property>
@@ -204,7 +222,7 @@
                   </object>
                   <packing>
                     <property name="left_attach">0</property>
-                    <property name="top_attach">11</property>
+                    <property name="top_attach">12</property>
                     <property name="width">2</property>
                   </packing>
                 </child>
@@ -221,7 +239,7 @@
                   </object>
                   <packing>
                     <property name="left_attach">0</property>
-                    <property name="top_attach">12</property>
+                    <property name="top_attach">13</property>
                     <property name="width">2</property>
                   </packing>
                 </child>
@@ -239,7 +257,7 @@
                   </object>
                   <packing>
                     <property name="left_attach">0</property>
-                    <property name="top_attach">13</property>
+                    <property name="top_attach">14</property>
                     <property name="width">2</property>
                   </packing>
                 </child>
@@ -255,7 +273,7 @@
                   </object>
                   <packing>
                     <property name="left_attach">0</property>
-                    <property name="top_attach">14</property>
+                    <property name="top_attach">15</property>
                   </packing>
                 </child>
                 <child>

@@ -1218,7 +1218,21 @@ public class BatchImport : Object {
         }
         
         // generate events for MediaSources not yet assigned
-        Event.generate_many_events(all, import_roll.generated_events);
+        if (Config.Facade.get_instance().get_use_source_folder_as_event_name()) {
+            // name events after the folder the files were imported from
+            foreach (MediaSource media in all) {
+                string? event_name = null;
+                BatchImportJob job = completion_list.get(media);
+                if (job is FileImportJob) {
+                    File? parent = ((FileImportJob) job).get_file().get_parent();
+                    if (parent != null && !is_string_empty(parent.get_basename()))
+                        event_name = parent.get_basename();
+                }
+                Event.generate_single_event(media, import_roll.generated_events, event_name);
+            }
+        } else {
+            Event.generate_many_events(all, import_roll.generated_events);
+        }
         
         Tag.global.thaw_notifications();
         Event.global.thaw_notifications();

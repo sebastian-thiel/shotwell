@@ -41,6 +41,8 @@ public class PreferencesDialog : Gtk.Dialog {
     private GLib.DateTime example_date = new GLib.DateTime.local(2009, 3, 10, 18, 16, 11);
     [GtkChild]
     private Gtk.CheckButton lowercase;
+    [GtkChild]
+    private Gtk.CheckButton use_source_folder_as_event_name;
     private Plugins.ManifestWidgetMediator plugins_mediator = new Plugins.ManifestWidgetMediator();
     [GtkChild]
     private Gtk.ComboBoxText default_raw_developer_combo;
@@ -120,11 +122,14 @@ public class PreferencesDialog : Gtk.Dialog {
         add_to_dir_formats(_("Year%sMonth-Day").printf(Path.DIR_SEPARATOR_S),
             "%Y" + Path.DIR_SEPARATOR_S + "%m-%d");
         add_to_dir_formats(_("Year-Month-Day"), "%Y-%m-%d");
+        add_to_dir_formats(_("Year%sEvent folder").printf(Path.DIR_SEPARATOR_S),
+            "%Y" + Path.DIR_SEPARATOR_S + AppDirs.EVENT_DIR_TOKEN);
         add_to_dir_formats(_("Custom"), null); // Custom must always be last.
         dir_pattern_combo.changed.connect(on_dir_pattern_combo_changed);
         dir_pattern_entry.changed.connect(on_dir_pattern_entry_changed);
 
         lowercase.toggled.connect(on_lowercase_toggled);
+        use_source_folder_as_event_name.toggled.connect(on_use_source_folder_as_event_name_toggled);
 
         ((Gtk.Container) preferences_notebook.get_nth_page (2)).add (plugins_mediator);
 
@@ -155,6 +160,9 @@ public class PreferencesDialog : Gtk.Dialog {
         setup_dir_pattern(dir_pattern_combo, dir_pattern_entry);
 
         lowercase.set_active(Config.Facade.get_instance().get_use_lowercase_filenames());
+
+        use_source_folder_as_event_name.set_active(
+            Config.Facade.get_instance().get_use_source_folder_as_event_name());
     }
 
     private void on_theme_variant_changed(GLib.Object o, GLib.ParamSpec ps) {
@@ -345,7 +353,8 @@ public class PreferencesDialog : Gtk.Dialog {
     }
 
     private void on_dir_pattern_entry_changed() {
-         string example = example_date.format(dir_pattern_entry.text);
+         string example = example_date.format(dir_pattern_entry.text)
+            .replace(AppDirs.EVENT_DIR_TOKEN, _("Event"));
          if (is_string_empty(example) && !is_string_empty(dir_pattern_entry.text)) {
             // Invalid pattern.
             dir_pattern_example.set_text(_("Invalid pattern"));
@@ -431,5 +440,10 @@ public class PreferencesDialog : Gtk.Dialog {
 
     private void on_lowercase_toggled() {
         Config.Facade.get_instance().set_use_lowercase_filenames(lowercase.get_active());
+    }
+
+    private void on_use_source_folder_as_event_name_toggled() {
+        Config.Facade.get_instance().set_use_source_folder_as_event_name(
+            use_source_folder_as_event_name.get_active());
     }
 }

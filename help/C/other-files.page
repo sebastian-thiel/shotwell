@@ -73,6 +73,16 @@
             There are other symbols available; please check the <link href="man:strftime">manual for strftime</link> by running
             the command <cmd>man strftime</cmd> if you need one that isn't listed here.
         </p>
+
+        <p>
+            In addition to the date and time symbols, the pattern may contain the token
+            <code>@event@</code>, which is replaced on import with the name of the folder the
+            photo was imported from. A pattern like <code>%Y/@event@</code> therefore stores a
+            photo imported from a folder named <file>Birthday</file> under
+            <file>Pictures/2011/Birthday/</file>. If the option
+            <gui>Use source folder name as event name</gui> is enabled in the preferences, the
+            imported photos are also grouped into an event named after that folder.
+        </p>
     </section>
 
     <section id="automatic-import">

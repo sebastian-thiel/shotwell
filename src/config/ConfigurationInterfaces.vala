@@ -91,6 +91,7 @@ public enum ConfigurableProperty {
     SLIDESHOW_SHOW_TITLE,
     USE_24_HOUR_TIME,
     USE_LOWERCASE_FILENAMES,
+    USE_SOURCE_FOLDER_AS_EVENT_NAME,
     VIDEO_INTERPRETER_STATE_COOKIE,
     
     
@@ -310,6 +311,9 @@ public enum ConfigurableProperty {
                 
             case USE_LOWERCASE_FILENAMES:
                 return "USE_LOWERCASE_FILENAMES";
+
+            case USE_SOURCE_FOLDER_AS_EVENT_NAME:
+                return "USE_SOURCE_FOLDER_AS_EVENT_NAME";
                 
             case VIDEO_INTERPRETER_STATE_COOKIE:
                 return "VIDEO_INTERPRETER_STATE_COOKIE";
@@ -1821,6 +1825,27 @@ public abstract class ConfigurationFacade : Object {
     public virtual void set_use_lowercase_filenames(bool b) {
         try {
             get_engine().set_bool_property(ConfigurableProperty.USE_LOWERCASE_FILENAMES, b);
+        } catch (ConfigurationError err) {
+            on_configuration_error(err);
+        }
+    }
+
+    //
+    // use the name of the source folder as the event name on import
+    //
+    public virtual bool get_use_source_folder_as_event_name() {
+        try {
+            return get_engine().get_bool_property(ConfigurableProperty.USE_SOURCE_FOLDER_AS_EVENT_NAME);
+        } catch (ConfigurationError err) {
+            on_configuration_error(err);
+
+            return false;
+        }
+    }
+
+    public virtual void set_use_source_folder_as_event_name(bool b) {
+        try {
+            get_engine().set_bool_property(ConfigurableProperty.USE_SOURCE_FOLDER_AS_EVENT_NAME, b);
         } catch (ConfigurationError err) {
             on_configuration_error(err);
         }
