@@ -69,12 +69,22 @@
             </p></td></tr><tr><td><p> </p></td><td><p> %M </p></td><td><p> Minute </p></td><td><p> 16 
             </p></td></tr><tr><td><p> </p></td><td><p> %S </p></td><td><p> Second </p></td><td><p> 30 
             </p></td></tr><tr><td><p> </p></td><td><p> %p </p></td><td><p> AM or PM </p></td><td><p> PM </p></td></tr>
+            <tr><td><p> </p></td><td><p> %E </p></td><td><p> Event folder name </p></td><td><p> Christmas with my parents </p></td></tr>
             </tbody>
         </table>
 
         <p>
             There are other symbols available; please check the <link href="man:strftime">manual for strftime</link> by running
             the command <cmd>man strftime</cmd> if you need one that isn't listed here.
+        </p>
+
+        <p>
+            The <em>%E</em> symbol is not a date symbol: it is replaced with the name of the folder
+            the imported file is located in, provided that folder sits inside a folder named like a
+            year (for example <file>2026/Christmas with my parents/photo.jpg</file>). If Shotwell
+            cannot derive an event folder name this way, <em>%E</em> falls back to
+            <em>%m/%d</em>. When photos from such a structure are imported, the events Shotwell
+            creates are also named after the event folders.
         </p>
     </section>
 

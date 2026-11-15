@@ -683,7 +683,8 @@ public class Event : EventSource, ContainerSource, Proxyable, Indexable {
             global.add(event);
     }
     
-    public static void generate_many_events(Gee.Collection<MediaSource> sources, ViewCollection events_so_far) {
+    public static void generate_many_events(Gee.Collection<MediaSource> sources, ViewCollection events_so_far,
+        Gee.Map<MediaSource, string>? event_names = null) {
         Gee.Collection<Event> to_add = new Gee.ArrayList<Event>();
         foreach (MediaSource media in sources) {
             // do not replace existing assignments
@@ -691,7 +692,8 @@ public class Event : EventSource, ContainerSource, Proxyable, Indexable {
                 continue;
             
             bool new_event;
-            Event? event = generate_event(media, events_so_far, null, out new_event);
+            string? event_name = (event_names != null) ? event_names.get(media) : null;
+            Event? event = generate_event(media, events_so_far, event_name, out new_event);
             if (event == null)
                 continue;
             

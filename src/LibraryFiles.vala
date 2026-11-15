@@ -24,8 +24,8 @@ public void select_copy_function() {
 // Thus, when the method returns success a file may exist already, and should be overwritten.
 //
 // This function is thread safe.
-public File? generate_unique_file(string basename, MediaMetadata? metadata, DateTime ts, out bool collision)
-    throws Error {
+public File? generate_unique_file(string basename, MediaMetadata? metadata, DateTime ts,
+    out bool collision, File? source = null) throws Error {
     // use exposure timestamp over the supplied one (which probably comes from the file's
     // modified time, or is simply time()), unless it's zero, in which case use current time
     
@@ -39,7 +39,7 @@ public File? generate_unique_file(string basename, MediaMetadata? metadata, Date
     }
     
     // build a directory tree inside the library
-    File dir = AppDirs.get_baked_import_dir(timestamp);
+    File dir = AppDirs.get_baked_import_dir(timestamp, source);
     try {
         dir.make_directory_with_parents(null);
     } catch (Error err) {
@@ -95,7 +95,7 @@ private File duplicate(File src, FileProgressCallback? progress_callback, bool b
     }
     
     bool collision;
-    File? dest = generate_unique_file(src.get_basename(), metadata, timestamp, out collision);
+    File? dest = generate_unique_file(src.get_basename(), metadata, timestamp, out collision, src);
     if (dest == null)
         throw new FileError.FAILED("Unable to generate unique pathname for destination");
     

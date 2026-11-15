@@ -166,13 +166,47 @@ class AppDirs {
         return get_home_dir().get_child(_("Pictures"));
     }
     
+    // If the file is located in a "year/event" folder structure (e.g. "2026/Christmas with my
+    // parents/photo.jpg"), returns the event folder name ("Christmas with my parents"),
+    // otherwise null.
+    public static string? get_event_folder_name(File file) {
+        File? event_dir = file.get_parent();
+        if (event_dir == null)
+            return null;
+        
+        File? year_dir = event_dir.get_parent();
+        if (year_dir == null)
+            return null;
+        
+        if (!/^\d{4}$/.match(year_dir.get_basename()))
+            return null;
+        
+        string event_name = event_dir.get_basename();
+        // a purely numeric folder (e.g. a month or day folder) is not an event name
+        if (/^\d+$/.match(event_name))
+            return null;
+        
+        return event_name;
+    }
+    
     // Library folder + photo folder, based on user's preferred directory pattern.
-    public static File get_baked_import_dir(DateTime tm) {
+    // If a source file is supplied and the pattern contains %E, %E is replaced with the name of
+    // the event folder the source file is located in (see get_event_folder_name()); if no event
+    // folder can be derived, it falls back to month/day directories.
+    public static File get_baked_import_dir(DateTime tm, File? source = null) {
         string? pattern = Config.Facade.get_instance().get_directory_pattern();
         if (is_string_empty(pattern))
             pattern = Config.Facade.get_instance().get_directory_pattern_custom();
         if (is_string_empty(pattern))
             pattern = "%Y" + Path.DIR_SEPARATOR_S + "%m" + Path.DIR_SEPARATOR_S + "%d"; // default
+        
+        if (pattern.contains("%E")) {
+            string? event_name = (source != null) ? get_event_folder_name(source) : null;
+            if (event_name != null)
+                pattern = pattern.replace("%E", event_name.replace("%", "%%"));
+            else
+                pattern = pattern.replace("%E", "%m" + Path.DIR_SEPARATOR_S + "%d");
+        }
             
         return File.new_for_path(get_import_dir().get_path() + Path.DIR_SEPARATOR_S + tm.to_local().format(pattern));
     }
