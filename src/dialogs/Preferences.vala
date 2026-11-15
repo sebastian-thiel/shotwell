@@ -128,6 +128,8 @@ public class PreferencesDialog : Gtk.Dialog {
         add_to_dir_formats(_("Year%sMonth-Day").printf(Path.DIR_SEPARATOR_S),
             "%Y" + Path.DIR_SEPARATOR_S + "%m-%d");
         add_to_dir_formats(_("Year-Month-Day"), "%Y-%m-%d");
+        add_to_dir_formats(_("Year%sEvent").printf(Path.DIR_SEPARATOR_S),
+            "%Y" + Path.DIR_SEPARATOR_S + "%E");
         add_to_dir_formats(_("Custom"), null); // Custom must always be last.
         dir_pattern_combo.notify["selected-item"].connect(on_dir_pattern_combo_changed);
         dir_pattern_entry.changed.connect(on_dir_pattern_entry_changed);
@@ -344,7 +346,9 @@ public class PreferencesDialog : Gtk.Dialog {
     }
 
     private void on_dir_pattern_entry_changed() {
-         string example = example_date.format(dir_pattern_entry.text);
+         // %E is not a strftime symbol; show a sample event folder name in the example
+         string example = example_date.format(
+             dir_pattern_entry.text.replace("%E", _("Event")));
          if (is_string_empty(example) && !is_string_empty(dir_pattern_entry.text)) {
             // Invalid pattern.
             dir_pattern_example.set_text(_("Invalid pattern"));

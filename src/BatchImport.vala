@@ -295,6 +295,7 @@ public class BatchImportResult {
     public ImportResult result;
     public string? errmsg = null;
     public DuplicatedFile? duplicate_of;
+    public string? original_path = null;  // path of the source file before it was copied into the library
     
     public BatchImportResult(BatchImportJob job, File? file, string src_identifier, 
         string dest_identifier, DuplicatedFile? duplicate_of, ImportResult result) {
@@ -1215,8 +1216,20 @@ public class BatchImport : Object {
             }
         }
         
+        // derive event names from the year/event folder structure of the source files, if any
+        Gee.HashMap<MediaSource, string> event_names = new Gee.HashMap<MediaSource, string>();
+        foreach (CompletedImportObject completed in ready_sources) {
+            if (completed.batch_result.original_path == null)
+                continue;
+            
+            string? event_name = AppDirs.get_event_folder_name(
+                File.new_for_path(completed.batch_result.original_path));
+            if (event_name != null)
+                event_names.set(completed.source, event_name);
+        }
+        
         // generate events for MediaSources not yet assigned
-        Event.generate_many_events(all, import_roll.generated_events);
+        Event.generate_many_events(all, import_roll.generated_events, event_names);
         
         Tag.global.thaw_notifications();
         Event.global.thaw_notifications();
@@ -2032,6 +2045,7 @@ private class PreparedFileImportJob : BackgroundJob {
         
         BatchImportResult batch_result = new BatchImportResult(prepared_file.job, final_file,
            final_file.get_path(), final_file.get_path(), null, result);
+        batch_result.original_path = prepared_file.file.get_path();
         if (batch_result.result != ImportResult.SUCCESS)
             failed = batch_result;
         else
