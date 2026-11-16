@@ -200,7 +200,7 @@ class AppDirs {
                 continue;
             if (i + 4 < len && is_ascii_digit(bytes[i + 4]))
                 continue; // part of a longer number
-            if (year >= 1900 && year <= 2099)
+            if (year >= 1000 && year <= 3000)
                 return year;
         }
         return null;

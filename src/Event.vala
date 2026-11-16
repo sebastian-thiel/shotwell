@@ -645,8 +645,15 @@ public class Event : EventSource, ContainerSource, Proxyable, Indexable {
         for (int ctr = 0; ctr < count; ctr++) {
             Event event = (Event) ((EventView) events_so_far.get_at(ctr)).get_source();
             
-            if ((event_name != null && event.has_name() && event_name == event.get_name())
-                || event.is_in_starting_day(exposure_time)) {
+            // A named event (e.g. from the source folder) must match by name only, so that
+            // files from different folders taken on the same day are not merged into one event.
+            if (event_name != null) {
+                if (event.has_name() && event_name == event.get_name()) {
+                    new_event = false;
+                    
+                    return event;
+                }
+            } else if (event.is_in_starting_day(exposure_time)) {
                 new_event = false;
                 
                 return event;

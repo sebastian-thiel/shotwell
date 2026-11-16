@@ -1191,10 +1191,17 @@ public class BatchImport : Object {
         flush_import_jobs();
     }
     
+    // Year of an event's newest media. Folder-named events contain only files of their year
+    // folder (or files pinned to 01.01. of that year), so this is the event's folder year.
+    private static int folder_event_year(Event event) {
+        time_t end = event.get_end_time();
+        return (end != 0) ? new DateTime.from_unix_local(end).get_year() : -1;
+    }
+
     //
     // Display imported sources and integrate into system
     //
-    
+
     private void flush_ready_sources() {
         if (ready_sources.size == 0)
             return;
@@ -1239,16 +1246,64 @@ public class BatchImport : Object {
         
         // generate events for MediaSources not yet assigned
         if (Config.Facade.get_instance().get_use_source_folder_as_event_name()) {
-            // name events after the folder the files were imported from
+            // Name events after the folder the files were imported from. An existing event
+            // with that name is reused when it belongs to the same year folder; only for a
+            // different year a new event named "<folder> <year>" is created, so same-named
+            // event folders in different year folders do not end up in one event (and no
+            // "<folder> <year> <year>" is ever created).
+            Gee.HashMap<string, Event> events_by_name = new Gee.HashMap<string, Event>();
+            foreach (DataObject object in Event.global.get_all()) {
+                Event event = (Event) object;
+                if (event.has_name())
+                    events_by_name.set(event.get_name(), event);
+            }
             foreach (MediaSource media in all) {
                 string? event_name = null;
+                Event? existing = null;
                 BatchImportJob job = completion_list.get(media);
                 if (job is FileImportJob) {
-                    File? parent = ((FileImportJob) job).get_file().get_parent();
-                    if (parent != null && !is_string_empty(parent.get_basename()))
-                        event_name = parent.get_basename();
+                    File file = ((FileImportJob) job).get_file();
+                    File? parent = file.get_parent();
+                    if (parent != null && !is_string_empty(parent.get_basename())) {
+                        string basename = parent.get_basename();
+                        int? year = AppDirs.get_source_folder_year(file);
+                        if (year != null) {
+                            string qualified = "%s %d".printf(basename, (int) year);
+                            if (events_by_name.has_key(qualified)) {
+                                // "<folder> <year>" already exists: add to it
+                                existing = events_by_name.get(qualified);
+                                event_name = qualified;
+                            } else {
+                                Event? plain = events_by_name.get(basename);
+                                if (plain != null && folder_event_year(plain) == (int) year) {
+                                    // same year folder: add to the existing plain-named event
+                                    existing = plain;
+                                    event_name = basename;
+                                } else if (plain != null) {
+                                    // same name in a different year: create "<folder> <year>"
+                                    event_name = qualified;
+                                } else {
+                                    // first occurrence: create the plain-named event
+                                    event_name = basename;
+                                }
+                            }
+                        } else {
+                            event_name = basename;
+                        }
+                    }
                 }
-                Event.generate_single_event(media, import_roll.generated_events, event_name);
+                if (existing != null) {
+                    if (media.get_event() == null)
+                        media.set_event(existing);
+                } else {
+                    bool unassigned = media.get_event() == null;
+                    Event.generate_single_event(media, import_roll.generated_events, event_name);
+                    if (unassigned && event_name != null) {
+                        Event? created = media.get_event();
+                        if (created != null)
+                            events_by_name.set(event_name, created);
+                    }
+                }
             }
         } else {
             Event.generate_many_events(all, import_roll.generated_events);
