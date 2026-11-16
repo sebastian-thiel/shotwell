@@ -816,6 +816,12 @@ public class Event : EventSource, ContainerSource, Proxyable, Indexable {
     }
     
     public override time_t get_start_time() {
+        // Events named after their source folder (the "use source folder as event name"
+        // option) are dated by their newest media instead of their earliest: the event
+        // gets the date (month) of the newest file in that folder.
+        if (has_name() && Config.Facade.get_instance().get_use_source_folder_as_event_name())
+            return get_end_time();
+
         // Because the ViewCollection is sorted by a DateComparator, the start time is the
         // first item.  However, we keep looking if it has no start time.
         int count = view.get_count();

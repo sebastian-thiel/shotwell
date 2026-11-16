@@ -27,17 +27,18 @@ public class PhotoImportParams {
     public string? exif_md5;
     public string? thumbnail_md5;
     public string? full_md5;
-    
+    public time_t exposure_time_override = 0;
+
     // IN/OUT:
     public Thumbnails? thumbnails;
-    
+
     // OUT:
     public PhotoRow row = new PhotoRow();
     public Gee.Collection<string>? keywords = null;
-    
-    public PhotoImportParams(File file, File? final_associated_file, ImportID import_id, 
-        PhotoFileSniffer.Options sniffer_options, string? exif_md5, string? thumbnail_md5, string? full_md5, 
-        Thumbnails? thumbnails = null) {
+
+    public PhotoImportParams(File file, File? final_associated_file, ImportID import_id,
+        PhotoFileSniffer.Options sniffer_options, string? exif_md5, string? thumbnail_md5, string? full_md5,
+        Thumbnails? thumbnails = null, time_t exposure_time_override = 0) {
         this.file = file;
         this.final_associated_file = final_associated_file;
         this.import_id = import_id;
@@ -46,6 +47,7 @@ public class PhotoImportParams {
         this.thumbnail_md5 = thumbnail_md5;
         this.full_md5 = full_md5;
         this.thumbnails = thumbnails;
+        this.exposure_time_override = exposure_time_override;
     }
     
     // Creates a placeholder import.
@@ -1232,7 +1234,7 @@ public abstract class Photo : PhotoSource, Dateable, Positionable {
             MetadataDateTime? date_time = detected.metadata.get_exposure_date_time();
             if (date_time != null)
                 exposure_time = date_time.get_timestamp();
-            
+
             orientation = detected.metadata.get_orientation();
             title = detected.metadata.get_title();
             gps_coords = detected.metadata.get_gps_coords();
@@ -1240,7 +1242,16 @@ public abstract class Photo : PhotoSource, Dateable, Positionable {
             params.keywords = detected.metadata.get_keywords();
             rating = detected.metadata.get_rating();
         }
-        
+
+        // if an exposure time override was supplied (e.g. 01.01. of the year of the source
+        // folder) and the file's own year differs from it, use the override
+        if (params.exposure_time_override != 0) {
+            int file_year = (exposure_time != 0)
+                ? new DateTime.from_unix_local(exposure_time).get_year() : -1;
+            if (file_year != new DateTime.from_unix_local(params.exposure_time_override).get_year())
+                exposure_time = params.exposure_time_override;
+        }
+
         // verify basic mechanics of photo: RGB 8-bit encoding
         if (detected.colorspace != Gdk.Colorspace.RGB 
             || detected.channels < 3 

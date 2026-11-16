@@ -174,16 +174,74 @@ class AppDirs {
     public const string EVENT_DIR_TOKEN = "@event@";
     private const string FALLBACK_EVENT_DIR = "event";
 
+    private static bool is_ascii_digit(uint8 b) {
+        return b >= 48 && b <= 57;
+    }
+
+    // Returns the first four-digit year (1900-2099) that appears as a separate number in a
+    // folder name (e.g. 2024 in "2024" or "Fotos 2024"), or null if the name contains none.
+    // Scans bytes: ASCII digits are single bytes and never part of a multi-byte UTF-8 char.
+    public static int? get_year_from_folder_name(string name) {
+        uint8[] bytes = name.data;
+        int len = bytes.length;
+        for (int i = 0; i + 4 <= len; i++) {
+            if (i > 0 && is_ascii_digit(bytes[i - 1]))
+                continue; // part of a longer number
+            int year = 0;
+            bool digits = true;
+            for (int j = 0; j < 4; j++) {
+                if (!is_ascii_digit(bytes[i + j])) {
+                    digits = false;
+                    break;
+                }
+                year = year * 10 + (bytes[i + j] - 48);
+            }
+            if (!digits)
+                continue;
+            if (i + 4 < len && is_ascii_digit(bytes[i + 4]))
+                continue; // part of a longer number
+            if (year >= 1900 && year <= 2099)
+                return year;
+        }
+        return null;
+    }
+
+    // Returns the year found in the name of the folder one level above the file's parent
+    // (the event folder), e.g. 2024 for "Pictures/2024/Birthday/photo.jpg". Returns null
+    // if the file has no such folder or its name contains no year.
+    public static int? get_source_folder_year(File file) {
+        File? event_dir = file.get_parent();
+        File? year_dir = (event_dir != null) ? event_dir.get_parent() : null;
+        return (year_dir != null) ? get_year_from_folder_name(year_dir.get_basename()) : null;
+    }
+
+    // If the folder one level above source's parent contains a year that differs from the
+    // year of tm, returns the local timestamp of 01.01. of that year; otherwise returns tm
+    // unchanged.
+    public static time_t apply_source_folder_year(time_t tm, File? source) {
+        if (source == null)
+            return tm;
+        int? folder_year = get_source_folder_year(source);
+        if (folder_year == null)
+            return tm;
+        if (new DateTime.from_unix_local(tm).get_year() == folder_year)
+            return tm;
+        return (time_t) new DateTime.local((int) folder_year, 1, 1, 0, 0, 0.0).to_unix();
+    }
+
     // Library folder + photo folder, based on user's preferred directory pattern.
     // If source is non-null, EVENT_DIR_TOKEN in the pattern is replaced with the basename
-    // of the source file's parent directory.
+    // of the source file's parent directory. If the "use source folder as event name"
+    // option is enabled, a year found in the folder one level above that parent that
+    // differs from the year of tm also replaces tm (as 01.01. of it).
     public static File get_baked_import_dir(time_t tm, File? source = null) {
         string? pattern = Config.Facade.get_instance().get_directory_pattern();
         if (is_string_empty(pattern))
             pattern = Config.Facade.get_instance().get_directory_pattern_custom();
         if (is_string_empty(pattern))
             pattern = "%Y" + Path.DIR_SEPARATOR_S + "%m" + Path.DIR_SEPARATOR_S + "%d"; // default
-            
+
+        tm = apply_source_folder_year(tm, source);
         DateTime date = new DateTime.from_unix_local(tm);
         string rel_path = date.format(pattern);
         if (rel_path.contains(EVENT_DIR_TOKEN)) {

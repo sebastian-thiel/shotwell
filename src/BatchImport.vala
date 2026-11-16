@@ -266,6 +266,26 @@ public class FileImportJob : BatchImportJob {
         return file_or_dir;
     }
 
+    private time_t cached_exposure_time_override = -1;
+
+    // If the "use source folder as event name" option is enabled and the folder one level
+    // above the file's parent (the event folder) contains a year (e.g. 2024 in
+    // "Pictures/2024/Birthday/photo.jpg"), offer 01.01. of that year as exposure time
+    // override. The consumer applies it only if the file's own year differs from the
+    // folder's year.
+    public override time_t get_exposure_time_override() {
+        if (cached_exposure_time_override < 0) {
+            cached_exposure_time_override = 0;
+            if (Config.Facade.get_instance().get_use_source_folder_as_event_name()) {
+                int? folder_year = AppDirs.get_source_folder_year(file_or_dir);
+                if (folder_year != null)
+                    cached_exposure_time_override =
+                        (time_t) new DateTime.local((int) folder_year, 1, 1, 0, 0, 0.0).to_unix();
+            }
+        }
+        return cached_exposure_time_override;
+    }
+
     public override bool recurse() {
         return this._recurse;
     }
@@ -2020,7 +2040,8 @@ private class PreparedFileImportJob : BackgroundJob {
         } else {
             photo_import_params = new PhotoImportParams(final_file, final_associated_file, import_id,
                 PhotoFileSniffer.Options.GET_ALL, prepared_file.exif_md5,
-                prepared_file.thumbnail_md5, prepared_file.full_md5, new Thumbnails());
+                prepared_file.thumbnail_md5, prepared_file.full_md5, new Thumbnails(),
+                prepared_file.job.get_exposure_time_override());
             
             result = Photo.prepare_for_import(photo_import_params);
         }

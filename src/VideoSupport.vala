@@ -149,8 +149,14 @@ public class VideoReader {
             VideoMetadata metadata = reader.read_metadata();
             MetadataDateTime? creation_date_time = metadata.get_creation_date_time();
             
-            if (creation_date_time != null && creation_date_time.get_timestamp() != 0)
-                exposure_time = creation_date_time.get_timestamp();
+            if (creation_date_time != null && creation_date_time.get_timestamp() != 0) {
+                // keep the override (e.g. 01.01. of the source folder's year) if the video's
+                // own year differs from the override's year
+                if (params.exposure_time_override == 0 ||
+                    new DateTime.from_unix_local(creation_date_time.get_timestamp()).get_year() ==
+                        new DateTime.from_unix_local(params.exposure_time_override).get_year())
+                    exposure_time = creation_date_time.get_timestamp();
+            }
             
             string? video_title = metadata.get_title();
             string? video_comment = metadata.get_comment();

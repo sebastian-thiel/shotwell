@@ -81,7 +81,18 @@
             photo imported from a folder named <file>Birthday</file> under
             <file>Pictures/2011/Birthday/</file>. If the option
             <gui>Use source folder name as event name</gui> is enabled in the preferences, the
-            imported photos are also grouped into an event named after that folder.
+            imported photos are also grouped into an event named after that folder. Such an
+            event is dated by the newest file in the folder, i.e. it appears in the month of
+            that file.
+        </p>
+
+        <p>
+            If the option <gui>Use source folder name as event name</gui> is enabled and an
+            imported file sits in an event folder whose parent folder contains a year in
+            its name (e.g. <file>Pictures/2024/Birthday</file>, where <file>Birthday</file>
+            is the event folder), and the file's own date lies in a different year, the
+            year of that folder is used for the file instead — specifically January 1st of
+            that year.
         </p>
     </section>
 
