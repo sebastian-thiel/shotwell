@@ -748,6 +748,12 @@
         <description>True if the Gallery3 publishing plugin is enabled, false otherwise</description>
     </key>
 
+    <key name="publishing-nextcloud" type="b">
+        <default>false</default>
+        <summary>enable nextcloud publishing plugin</summary>
+        <description>True if the Nextcloud publishing plugin is enabled, false otherwise</description>
+    </key>
+
     <key name="dataimports-fspot" type="b">
         <default>true</default>
         <summary>enable F-Spot import plugin</summary>
