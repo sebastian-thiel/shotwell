@@ -98,6 +98,25 @@ public abstract class DatabaseTable {
         res = db.exec("PRAGMA synchronous=OFF");
         if (res != Sqlite.OK)
             warning("Unable to disable synchronous mode", res);
+
+        // Speed up startup and read-heavy workloads:
+        // WAL allows concurrent readers while writing, mmap avoids syscall overhead for reads,
+        // a larger page cache keeps hot pages in RAM, and temp tables stay in memory.
+        res = db.exec("PRAGMA journal_mode=WAL");
+        if (res != Sqlite.OK)
+            warning("Unable to enable WAL journal mode", res);
+
+        res = db.exec("PRAGMA mmap_size=268435456"); // 256 MiB
+        if (res != Sqlite.OK)
+            warning("Unable to set mmap_size", res);
+
+        res = db.exec("PRAGMA cache_size=-65536"); // 64 MiB page cache (negative = KiB)
+        if (res != Sqlite.OK)
+            warning("Unable to set cache_size", res);
+
+        res = db.exec("PRAGMA temp_store=MEMORY");
+        if (res != Sqlite.OK)
+            warning("Unable to set temp_store=MEMORY", res);
     }
     
     public static void terminate() {
