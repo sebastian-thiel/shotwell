@@ -80,8 +80,13 @@ private const string CONFIG_USER = "nc_user";
 private const string CONFIG_REMOTE_BASE = "remote_base";
 private const string CONFIG_EXPIRE_DAYS = "expire_days";
 private const string CONFIG_SHARE_NOTE = "share_note";
+private const string CONFIG_SHARE_PASSWORD = "share_password";
 
-private const string DEFAULT_REMOTE_BASE = "/Shotwell";
+// Alphabet without easily confused characters (no 0/O, 1/l/I)
+private const string PW_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+private const int PW_LENGTH = 8;
+
+private const string DEFAULT_REMOTE_BASE = "/Photos"; // used when the field is left empty
 private const int DEFAULT_EXPIRE_DAYS = 0; // 0 = link never expires
 private const int MAX_EXPIRE_DAYS = 3650;
 private const string FALLBACK_FOLDER_NAME = "Shotwell";
@@ -103,6 +108,7 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
     private string remote_base;
     private int expire_days;
     private string share_note;
+    private string share_password;
 
     public NextcloudPublisher(Spit.Publishing.Service service, Spit.Publishing.PluginHost host) {
         this.service = service;
@@ -119,10 +125,20 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         // Note: the config facade maps empty stored strings to null, so coalesce here.
         server_url = host.get_config_string(CONFIG_SERVER_URL, cfg_url ?? "") ?? cfg_url ?? "";
         user = host.get_config_string(CONFIG_USER, cfg_user ?? "") ?? cfg_user ?? "";
-        remote_base = host.get_config_string(CONFIG_REMOTE_BASE, DEFAULT_REMOTE_BASE)
-            ?? DEFAULT_REMOTE_BASE;
+        // Leave the field empty if nothing is stored; the default is applied on use.
+        remote_base = host.get_config_string(CONFIG_REMOTE_BASE, "") ?? "";
         expire_days = host.get_config_int(CONFIG_EXPIRE_DAYS, DEFAULT_EXPIRE_DAYS);
         share_note = host.get_config_string(CONFIG_SHARE_NOTE, "") ?? "";
+        share_password = host.get_config_string(CONFIG_SHARE_PASSWORD, "") ?? "";
+    }
+
+    // Generate a random, unambiguous password (no 0/O, 1/l/I) of PW_LENGTH chars.
+    internal static string generate_share_password() {
+        var sb = new StringBuilder();
+        int n = PW_ALPHABET.length;
+        for (int i = 0; i < PW_LENGTH; i++)
+            sb.append_unichar(PW_ALPHABET.get_char(GLib.Random.int_range(0, n)));
+        return sb.str;
     }
 
     public bool is_running() {
@@ -142,12 +158,13 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
 
         string folder_name = determine_folder_name();
         pane = new OptionsPane(server_url, user, remote_base, lookup_password(), folder_name,
-            expire_days, share_note);
+            expire_days, share_note, share_password);
         pane.publish.connect(on_publish);
         pane.browser_login.connect(on_browser_login);
         pane.remote_base_changed.connect(on_remote_base_changed);
         pane.expire_days_changed.connect(on_expire_days_changed);
         pane.share_note_changed.connect(on_share_note_changed);
+        pane.share_password_changed.connect(on_share_password_changed);
         host.install_dialog_pane(pane);
     }
 
@@ -216,12 +233,17 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         host.set_config_string(CONFIG_SHARE_NOTE, value);
     }
 
+    private void on_share_password_changed(string value) {
+        host.set_config_string(CONFIG_SHARE_PASSWORD, value);
+    }
+
     private void on_publish() {
         server_url = pane.get_server_url().strip();
         user = pane.get_user().strip();
         remote_base = normalize_remote_base(pane.get_remote_base().strip());
         expire_days = pane.get_expire_days();
         share_note = pane.get_share_note().strip();
+        share_password = pane.get_share_password().strip();
         string password = pane.get_password();
 
         if (server_url == "" || user == "" || password == "") {
@@ -235,6 +257,7 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         host.set_config_string(CONFIG_REMOTE_BASE, remote_base);
         host.set_config_int(CONFIG_EXPIRE_DAYS, expire_days);
         host.set_config_string(CONFIG_SHARE_NOTE, share_note);
+        host.set_config_string(CONFIG_SHARE_PASSWORD, share_password);
         store_password(password);
 
         progress_reporter = host.serialize_publishables(0);
@@ -363,7 +386,7 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         ShareInfo? existing = find_existing_share(session, remote_path, password);
         if (existing != null) {
             debug("Reusing existing link share for %s: %s", remote_path, existing.url);
-            update_share_expiry(session, existing.id, password);
+            update_share_settings(session, existing.id, password);
             return existing.url;
         }
 
@@ -373,6 +396,8 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
             body.append_printf("&expireDate=%s", enc(expire_date()));
         if (share_note != "")
             body.append_printf("&note=%s", enc(share_note));
+        if (share_password != "")
+            body.append_printf("&password=%s", enc(share_password));
 
         var msg = new Soup.Message("POST", ocs_url);
         add_auth(msg, password);
@@ -442,10 +467,11 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         return null;
     }
 
-    // Apply expiry date / note to an existing share. Best effort: failures are logged
-    // but don't abort the upload.
-    private void update_share_expiry(Soup.Session session, string share_id, string password) {
-        if (share_id == "" || (expire_days <= 0 && share_note == ""))
+    // Apply expiry date / note / password to an existing share. Best effort:
+    // failures are logged but don't abort the upload.
+    private void update_share_settings(Soup.Session session, string share_id, string password) {
+        bool want_password = share_password != "";
+        if (share_id == "" || (expire_days <= 0 && share_note == "" && !want_password))
             return;
 
         var body = new StringBuilder();
@@ -455,6 +481,11 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
             if (body.len > 0)
                 body.append("&");
             body.append_printf("note=%s", enc(share_note));
+        }
+        if (want_password) {
+            if (body.len > 0)
+                body.append("&");
+            body.append_printf("password=%s", enc(share_password));
         }
 
         string url = "%s/ocs/v2.php/apps/files_sharing/api/v1/shares/%s".printf(
@@ -467,9 +498,9 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         msg.set_request("application/x-www-form-urlencoded", Soup.MemoryUse.COPY, body.str.data);
         uint status = session.send_message(msg);
         if (status != 200)
-            warning("Could not update expiry/note of share %s (HTTP %u)", share_id, status);
+            warning("Could not update settings of share %s (HTTP %u)", share_id, status);
         else
-            debug("Updated expiry/note of existing share %s", share_id);
+            debug("Updated expiry/note/password of existing share %s", share_id);
     }
 
     // --- Nextcloud Login Flow v2 (browser login, like the desktop client) ---
@@ -644,9 +675,18 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
             return;
         }
 
+        // Offer everything relevant for sharing in the clipboard, not just the URL:
+        // link, plus expiry date, password and note if configured.
+        var clip = new StringBuilder(share_url);
+        if (expire_days > 0)
+            clip.append_printf("\n%s: %s", _("Valid until"), expire_date());
+        if (share_password != "")
+            clip.append_printf("\n%s: %s", _("Password"), share_password);
+        if (share_note != "")
+            clip.append_printf("\n%s: %s", _("Note"), share_note);
         try {
             var clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD);
-            clipboard.set_text(share_url, -1);
+            clipboard.set_text(clip.str, -1);
             clipboard.store();
         } catch (Error e) {
             debug("Could not copy link to clipboard: %s", e.message);
@@ -654,12 +694,15 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
 
         string escaped = GLib.Markup.escape_text(share_url);
         string markup = _("The photos were uploaded to Nextcloud and the folder was shared.\n\n"
-            + "Share link (copied to the clipboard):\n<a href=\"%s\">%s</a>").printf(escaped, escaped);
+            + "Share link (link, expiry, password and note copied to the clipboard):\n"
+            + "<a href=\"%s\">%s</a>").printf(escaped, escaped);
         if (expire_days > 0)
             markup += "\n\n" + _("The link expires on %s.").printf(expire_date());
         if (share_note != "")
             markup += "\n" + _("Note for recipients: %s").printf(
                 GLib.Markup.escape_text(share_note));
+        if (share_password != "")
+            markup += "\n" + _("Password: %s").printf(GLib.Markup.escape_text(share_password));
         host.install_pango_message_pane(markup, Spit.Publishing.PluginHost.ButtonMode.CLOSE);
     }
 }
@@ -673,6 +716,7 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
     private Gtk.Entry password_entry;
     private Gtk.SpinButton expire_days_spin;
     private Gtk.Entry note_entry;
+    private Gtk.Entry share_password_entry;
     private Gtk.Button browser_login_button;
     private Gtk.Label status_label;
     private Gtk.Label target_label;
@@ -684,9 +728,10 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
     public signal void remote_base_changed(string value);
     public signal void expire_days_changed(int value);
     public signal void share_note_changed(string value);
+    public signal void share_password_changed(string value);
 
     public OptionsPane(string server_url, string user, string remote_base, string? password,
-        string folder_name, int expire_days, string share_note) {
+        string folder_name, int expire_days, string share_note, string share_password) {
         this.folder_name = folder_name;
         box = new Gtk.Box(Gtk.Orientation.VERTICAL, 6);
         box.margin = 12;
@@ -698,22 +743,23 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
 
         server_entry = add_row(grid, 0, _("Server URL:"), server_url,
             "https://cloud.example.com");
-        remote_base_entry = add_row(grid, 1, _("Remote folder (base):"), remote_base,
-            "/Photos");
-        remote_base_entry.changed.connect(() => {
-            update_target_preview();
-            remote_base_changed(remote_base_entry.get_text());
-        });
 
         browser_login_button = new Gtk.Button.with_label(_("Log in via browser…"));
         browser_login_button.clicked.connect(() => browser_login());
         browser_login_button.halign = Gtk.Align.START;
-        grid.attach(browser_login_button, 1, 2, 1, 1);
+        grid.attach(browser_login_button, 1, 1, 1, 1);
 
-        user_entry = add_row(grid, 3, _("User name:"), user, "user");
-        password_entry = add_row(grid, 4, _("App password:"), password ?? "",
+        user_entry = add_row(grid, 2, _("User name:"), user, "user");
+        password_entry = add_row(grid, 3, _("App password:"), password ?? "",
             _("from browser login or the Nextcloud web UI"));
         password_entry.set_visibility(false);
+
+        remote_base_entry = add_row(grid, 4, _("Remote folder (base):"), remote_base,
+            DEFAULT_REMOTE_BASE);
+        remote_base_entry.changed.connect(() => {
+            update_target_preview();
+            remote_base_changed(remote_base_entry.get_text());
+        });
 
         var expire_label = new Gtk.Label(_("Link expires after (days):"));
         expire_label.halign = Gtk.Align.END;
@@ -728,6 +774,18 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
         note_entry = add_row(grid, 6, _("Note for recipients:"), share_note,
             _("optional, shown on the public link page"));
         note_entry.changed.connect(() => share_note_changed(note_entry.get_text()));
+
+        share_password_entry = add_row(grid, 7, _("Share password:"), share_password,
+            _("optional — leave empty for no password"));
+        // Passwords are only generated explicitly via the button, never on focus.
+        share_password_entry.changed.connect(() =>
+            share_password_changed(share_password_entry.get_text()));
+
+        var regen_button = new Gtk.Button.with_label("🔄");
+        regen_button.set_tooltip_text(_("Generate a new random password"));
+        regen_button.clicked.connect(() =>
+            share_password_entry.set_text(NextcloudPublisher.generate_share_password()));
+        grid.attach(regen_button, 2, 7, 1, 1);
 
         status_label = new Gtk.Label("");
         status_label.halign = Gtk.Align.START;
@@ -805,6 +863,10 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
 
     public string get_share_note() {
         return note_entry.get_text();
+    }
+
+    public string get_share_password() {
+        return share_password_entry.get_text();
     }
 
     public Gtk.Widget get_widget() {

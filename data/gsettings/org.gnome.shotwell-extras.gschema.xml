@@ -111,9 +111,9 @@
     </key>
 
     <key name="remote-base" type="s">
-        <default>"/Photos"</default>
+        <default>""</default>
         <summary>Remote base folder</summary>
-        <description>Remote folder on the Nextcloud server below which one folder per event is created</description>
+        <description>Remote folder on the Nextcloud server below which one folder per event is created (empty = /Photos)</description>
     </key>
 
     <key name="expire-days" type="i">
@@ -126,6 +126,12 @@
         <default>""</default>
         <summary>Note for share recipients</summary>
         <description>Optional note shown to recipients on the public link page of the share</description>
+    </key>
+
+    <key name="share-password" type="s">
+        <default>""</default>
+        <summary>Password for the link share</summary>
+        <description>Password protecting the public link share (empty = link is not password-protected)</description>
     </key>
 
 </schema>
