@@ -5054,12 +5054,52 @@ public class LibraryPhoto : Photo, Flaggable, Monitorable {
     
     public static void init(ProgressMonitor? monitor = null) {
         init_photo();
-        
+
         global = new LibraryPhotoSourceCollection();
-        
+
         // prefetch all the photos from the database and add them to the global collection ...
         // do in batches to take advantage of add_many()
         Gee.ArrayList<PhotoRow?> all = PhotoTable.get_instance().get_all();
+        add_rows(all, monitor);
+    }
+
+    // Progressive startup: create the global collection immediately but don't load any photo
+    // objects yet.  Call load_next_batch() repeatedly (e.g. from an idle callback) to fill the
+    // collection in chunks while the UI is already visible.
+    private static int pending_load_offset = 0;
+    private static int pending_load_total = 0;
+
+    public static void init_skeleton() {
+        init_photo();
+
+        global = new LibraryPhotoSourceCollection();
+
+        pending_load_total = PhotoTable.get_instance().get_row_count();
+        pending_load_offset = 0;
+    }
+
+    // Returns the number of photos still pending after this call, 0 when loading is complete.
+    public static int load_next_batch(int batch_size = 500, ProgressMonitor? monitor = null) {
+        if (global == null)
+            return 0;
+
+        Gee.ArrayList<PhotoRow?> rows = PhotoTable.get_instance().get_rows_batch(
+            pending_load_offset, batch_size);
+        if (rows.size == 0)
+            return 0;
+
+        add_rows(rows, monitor);
+
+        pending_load_offset += rows.size;
+        int remaining = pending_load_total - pending_load_offset;
+        return remaining > 0 ? remaining : 0;
+    }
+
+    public static bool is_fully_loaded() {
+        return pending_load_offset >= pending_load_total;
+    }
+
+    private static void add_rows(Gee.ArrayList<PhotoRow?> all, ProgressMonitor? monitor = null) {
         Gee.ArrayList<LibraryPhoto> all_photos = new Gee.ArrayList<LibraryPhoto>();
         Gee.ArrayList<LibraryPhoto> trashed_photos = new Gee.ArrayList<LibraryPhoto>();
         Gee.ArrayList<LibraryPhoto> offline_photos = new Gee.ArrayList<LibraryPhoto>();
@@ -5068,18 +5108,18 @@ public class LibraryPhoto : Photo, Flaggable, Monitorable {
             PhotoRow row = all.get(ctr);
             LibraryPhoto photo = new LibraryPhoto(row);
             uint64 flags = row.flags;
-            
+
             if ((flags & FLAG_TRASH) != 0)
                 trashed_photos.add(photo);
             else if ((flags & FLAG_OFFLINE) != 0)
                 offline_photos.add(photo);
             else
                 all_photos.add(photo);
-            
+
             if (monitor != null)
                 monitor(ctr, count);
         }
-        
+
         global.add_many(all_photos);
         global.add_many_to_trash(trashed_photos);
         global.add_many_to_offline(offline_photos);

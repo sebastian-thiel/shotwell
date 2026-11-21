@@ -457,60 +457,96 @@ public class PhotoTable : DatabaseTable {
         return row;
     }
     
+    private const string SELECT_ALL_COLUMNS =
+        "SELECT id, filename, width, height, filesize, timestamp, exposure_time, orientation, "
+        + "original_orientation, import_id, event_id, transformations, md5, thumbnail_md5, "
+        + "exif_md5, time_created, flags, rating, file_format, title, backlinks, time_reimported, "
+        + "editable_id, metadata_dirty, developer, develop_shotwell_id, develop_camera_id, "
+        + "develop_embedded_id, has_gps, gps_lat, gps_lon, comment FROM PhotoTable";
+
+    private PhotoRow parse_row(Sqlite.Statement stmt) {
+        PhotoRow row = new PhotoRow();
+        row.photo_id.id = stmt.column_int64(0);
+        row.master.filepath = stmt.column_text(1);
+        row.master.dim = Dimensions(stmt.column_int(2), stmt.column_int(3));
+        row.master.filesize = stmt.column_int64(4);
+        row.master.timestamp = (time_t) stmt.column_int64(5);
+        row.exposure_time = (time_t) stmt.column_int64(6);
+        row.orientation = (Orientation) stmt.column_int(7);
+        row.master.original_orientation = (Orientation) stmt.column_int(8);
+        row.import_id.id = stmt.column_int64(9);
+        row.event_id.id = stmt.column_int64(10);
+        row.transformations = marshall_all_transformations(stmt.column_text(11));
+        row.md5 = stmt.column_text(12);
+        row.thumbnail_md5 = stmt.column_text(13);
+        row.exif_md5 = stmt.column_text(14);
+        row.time_created = (time_t) stmt.column_int64(15);
+        row.flags = stmt.column_int64(16);
+        row.rating = Rating.unserialize(stmt.column_int(17));
+        row.master.file_format = PhotoFileFormat.unserialize(stmt.column_int(18));
+        row.title = stmt.column_text(19);
+        row.backlinks = stmt.column_text(20);
+        row.time_reimported = (time_t) stmt.column_int64(21);
+        row.editable_id = BackingPhotoID(stmt.column_int64(22));
+        row.metadata_dirty = stmt.column_int(23) != 0;
+        row.developer = stmt.column_text(24) != null ? RawDeveloper.from_string(stmt.column_text(24)) :
+            RawDeveloper.CAMERA;
+        row.development_ids[RawDeveloper.SHOTWELL] = BackingPhotoID(stmt.column_int64(25));
+        row.development_ids[RawDeveloper.CAMERA] = BackingPhotoID(stmt.column_int64(26));
+        row.development_ids[RawDeveloper.EMBEDDED] = BackingPhotoID(stmt.column_int64(27));
+        row.gps_coords.has_gps = stmt.column_int(28);
+        row.gps_coords.latitude = stmt.column_double(29);
+        row.gps_coords.longitude = stmt.column_double(30);
+        row.comment = stmt.column_text(31);
+
+        validate_orientation(row);
+
+        return row;
+    }
+
     public Gee.ArrayList<PhotoRow?> get_all() {
         Sqlite.Statement stmt;
-        int res = db.prepare_v2(
-            "SELECT id, filename, width, height, filesize, timestamp, exposure_time, orientation, "
-            + "original_orientation, import_id, event_id, transformations, md5, thumbnail_md5, "
-            + "exif_md5, time_created, flags, rating, file_format, title, backlinks, time_reimported, "
-            + "editable_id, metadata_dirty, developer, develop_shotwell_id, develop_camera_id, " 
-            + "develop_embedded_id, has_gps, gps_lat, gps_lon, comment FROM PhotoTable",
-            -1, out stmt);
+        int res = db.prepare_v2(SELECT_ALL_COLUMNS, -1, out stmt);
         assert(res == Sqlite.OK);
-        
+
         Gee.ArrayList<PhotoRow?> all = new Gee.ArrayList<PhotoRow?>();
-        
-        while ((res = stmt.step()) == Sqlite.ROW) {
-            PhotoRow row = new PhotoRow();
-            row.photo_id.id = stmt.column_int64(0);
-            row.master.filepath = stmt.column_text(1);
-            row.master.dim = Dimensions(stmt.column_int(2), stmt.column_int(3));
-            row.master.filesize = stmt.column_int64(4);
-            row.master.timestamp = (time_t) stmt.column_int64(5);
-            row.exposure_time = (time_t) stmt.column_int64(6);
-            row.orientation = (Orientation) stmt.column_int(7);
-            row.master.original_orientation = (Orientation) stmt.column_int(8);
-            row.import_id.id = stmt.column_int64(9);
-            row.event_id.id = stmt.column_int64(10);
-            row.transformations = marshall_all_transformations(stmt.column_text(11));
-            row.md5 = stmt.column_text(12);
-            row.thumbnail_md5 = stmt.column_text(13);
-            row.exif_md5 = stmt.column_text(14);
-            row.time_created = (time_t) stmt.column_int64(15);
-            row.flags = stmt.column_int64(16);
-            row.rating = Rating.unserialize(stmt.column_int(17));
-            row.master.file_format = PhotoFileFormat.unserialize(stmt.column_int(18));
-            row.title = stmt.column_text(19);
-            row.backlinks = stmt.column_text(20);
-            row.time_reimported = (time_t) stmt.column_int64(21);
-            row.editable_id = BackingPhotoID(stmt.column_int64(22));
-            row.metadata_dirty = stmt.column_int(23) != 0;
-            row.developer = stmt.column_text(24) != null ? RawDeveloper.from_string(stmt.column_text(24)) :
-                RawDeveloper.CAMERA;
-            row.development_ids[RawDeveloper.SHOTWELL] = BackingPhotoID(stmt.column_int64(25));
-            row.development_ids[RawDeveloper.CAMERA] = BackingPhotoID(stmt.column_int64(26));
-            row.development_ids[RawDeveloper.EMBEDDED] = BackingPhotoID(stmt.column_int64(27));
-            row.gps_coords.has_gps = stmt.column_int(28);
-            row.gps_coords.latitude = stmt.column_double(29);
-            row.gps_coords.longitude = stmt.column_double(30);
-            row.comment = stmt.column_text(31);
-            
-            validate_orientation(row);
-            
-            all.add(row);
-        }
-        
+
+        while ((res = stmt.step()) == Sqlite.ROW)
+            all.add(parse_row(stmt));
+
         return all;
+    }
+
+    // Lightweight: only fetch the row IDs, used for progressive loading at startup.
+    public Gee.ArrayList<int64?> get_all_ids() {
+        Sqlite.Statement stmt;
+        int res = db.prepare_v2("SELECT id FROM PhotoTable", -1, out stmt);
+        assert(res == Sqlite.OK);
+
+        Gee.ArrayList<int64?> ids = new Gee.ArrayList<int64?>();
+        while ((res = stmt.step()) == Sqlite.ROW)
+            ids.add(stmt.column_int64(0));
+
+        return ids;
+    }
+
+    // Fetch a batch of full rows for progressive loading (LIMIT/OFFSET over the same column set
+    // as get_all()).
+    public Gee.ArrayList<PhotoRow?> get_rows_batch(int offset, int limit) {
+        Sqlite.Statement stmt;
+        int res = db.prepare_v2(SELECT_ALL_COLUMNS + " LIMIT ? OFFSET ?", -1, out stmt);
+        assert(res == Sqlite.OK);
+
+        res = stmt.bind_int(1, limit);
+        assert(res == Sqlite.OK);
+        res = stmt.bind_int(2, offset);
+        assert(res == Sqlite.OK);
+
+        Gee.ArrayList<PhotoRow?> batch = new Gee.ArrayList<PhotoRow?>();
+        while ((res = stmt.step()) == Sqlite.ROW)
+            batch.add(parse_row(stmt));
+
+        return batch;
     }
     
     // Create a duplicate of the specified row.  A new byte-for-byte duplicate (including filesystem

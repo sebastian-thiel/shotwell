@@ -129,8 +129,10 @@ void library_exec(string[] mounts) {
     LibraryFiles.select_copy_function();
     
     if (aggregate_monitor != null)
-        aggregate_monitor.next_step("LibraryPhoto.init");
-    LibraryPhoto.init(monitor);
+        aggregate_monitor.next_step("LibraryPhoto.init_skeleton");
+    // Progressive startup: only create the collection shell now; photo objects are loaded in
+    // idle batches after the window is shown (see below).
+    LibraryPhoto.init_skeleton();
     if (aggregate_monitor != null)
         aggregate_monitor.next_step("Video.init");
     Video.init(monitor);
@@ -159,7 +161,8 @@ void library_exec(string[] mounts) {
     Face.init(monitor);
 #endif
     
-    MetadataWriter.init();
+    // MetadataWriter is initialized after the progressive photo load completes (see idle
+    // callback below), so it doesn't scan a half-loaded library.
     DesktopIntegration.init();
     
     Application.get_instance().init_done();
@@ -187,9 +190,21 @@ void library_exec(string[] mounts) {
 
     library_window.show_all();
 
+    // Progressive photo loading: fill LibraryPhoto.global in batches from an idle callback so
+    // the window is interactive immediately.  MetadataWriter is started once loading finishes.
+    Idle.add(() => {
+        int remaining = LibraryPhoto.load_next_batch(500);
+        if (remaining == 0 && !metadata_writer_started) {
+            metadata_writer_started = true;
+            MetadataWriter.init();
+            debug("Progressive photo load complete");
+        }
+        return remaining > 0;
+    }, Priority.LOW);
+
     WelcomeServiceEntry[] selected_import_entries = new WelcomeServiceEntry[0];
     if (Config.Facade.get_instance().get_show_welcome_dialog() &&
-        LibraryPhoto.global.get_count() == 0) {
+        PhotoTable.get_instance().get_row_count() == 0) {
         WelcomeDialog welcome = new WelcomeDialog(library_window);
         Config.Facade.get_instance().set_show_welcome_dialog(welcome.execute(out selected_import_entries,
             out do_system_pictures_import));
@@ -233,6 +248,7 @@ void library_exec(string[] mounts) {
 
 private bool do_system_pictures_import = false;
 private bool do_external_import = false;
+private bool metadata_writer_started = false;
 
 public void run_system_pictures_import(ImportManifest? external_exclusion_manifest = null) {
     if (!do_system_pictures_import)
