@@ -526,6 +526,7 @@ public interface Publishable : GLib.Object {
     public const string PARAM_STRING_TITLE       = "title";
     public const string PARAM_STRING_COMMENT     = "comment";
     public const string PARAM_STRING_EVENTCOMMENT= "eventcomment";
+    public const string PARAM_STRING_EVENTNAME   = "eventname";
 
     /**
      * Returns a handle to the file on disk to which this publishable's data has been

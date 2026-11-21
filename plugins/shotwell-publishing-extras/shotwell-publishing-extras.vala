@@ -10,6 +10,8 @@ private class ShotwellPublishingExtraServices : Object, Spit.Module {
     private Spit.Pluggable[] pluggables = new Spit.Pluggable[0];
 
     public ShotwellPublishingExtraServices(GLib.File module_file) {
+    pluggables += new NextcloudService();
+
 #if HAVE_YANDEX
         pluggables += new YandexService();
 #endif

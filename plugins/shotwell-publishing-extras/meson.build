@@ -1,5 +1,6 @@
 shotwell_publishing_extra_sources = [
     'GalleryConnector.vala',
+    'NextcloudPublishing.vala',
     'RajcePublishing.vala',
     'shotwell-publishing-extras.vala',
     'YandexPublishing.vala'

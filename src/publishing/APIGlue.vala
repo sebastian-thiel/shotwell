@@ -37,10 +37,13 @@ public class MediaSourcePublishableWrapper : Spit.Publishing.Publishable, GLib.O
         param_string.set(PARAM_STRING_TITLE, wrapped.get_title());
         param_string.set(PARAM_STRING_COMMENT, wrapped.get_comment());
         
-        if (wrapped.get_event() != null)
+        if (wrapped.get_event() != null) {
             param_string.set(PARAM_STRING_EVENTCOMMENT, wrapped.get_event().get_comment());
-        else
+            param_string.set(PARAM_STRING_EVENTNAME, wrapped.get_event().get_name());
+        } else {
             param_string.set(PARAM_STRING_EVENTCOMMENT, "");
+            param_string.set(PARAM_STRING_EVENTNAME, "");
+        }
     }
 
     public GLib.File serialize_for_publishing(int content_major_axis,
