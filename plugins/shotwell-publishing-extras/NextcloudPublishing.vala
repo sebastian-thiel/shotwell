@@ -855,6 +855,10 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
                     if (!(folder_path in touched_folders))
                         touched_folders += folder_path;
                 } else if (res == DeleteResult.NOT_FOUND) {
+                    // Already gone on the server (e.g. deleted there manually) —
+                    // still counts as unpublished locally, so the share comment
+                    // gets removed; the name is reported separately.
+                    unpublished[i] = true;
                     not_found += name;
                 } else {
                     failed++;
@@ -986,13 +990,12 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
             }
         }
 
-        // Nothing succeeded at all → error dialog.
-        if (uploaded == 0 && unpublished_count == 0 && (not_found.length > 0 || failed > 0)) {
-            string msg = not_found.length > 0
-                ? _("The following photo(s) were not found on the server and were NOT "
-                    + "removed: %s").printf(string.joinv(", ", not_found))
-                : _("%d file(s) could not be processed on the server.").printf(failed);
-            host.post_error(new Spit.Publishing.PublishingError.SERVICE_ERROR("%s", msg));
+        // Nothing succeeded at all and there were real server errors → error dialog.
+        // (Pure "not found" is not an error: the photo is already gone on the server,
+        // its local share comment has been removed above.)
+        if (uploaded == 0 && unpublished_count == 0 && failed > 0) {
+            host.post_error(new Spit.Publishing.PublishingError.SERVICE_ERROR(
+                _("%d file(s) could not be processed on the server.").printf(failed)));
             return;
         }
 
@@ -1034,7 +1037,7 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         if (not_found.length > 0) {
             if (sb.len > 0)
                 sb.append("\n\n");
-            sb.append_printf(_("Not found on the server (not removed): %s"),
+            sb.append_printf(_("Already gone on the server (local share comment removed): %s"),
                 GLib.Markup.escape_text(string.joinv(", ", not_found)));
         }
         if (failed > 0) {
