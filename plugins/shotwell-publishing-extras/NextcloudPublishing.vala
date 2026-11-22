@@ -446,6 +446,24 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         return false;
     }
 
+    // Append a stamp block to a comment, keeping any existing text.
+    internal static string append_stamp_block(string? comment, string block) {
+        if (comment == null || comment.strip() == "")
+            return block;
+        return comment.strip() + "\n\n" + block;
+    }
+
+    // True if the comment already has a share stamp for the given remote path.
+    internal static bool has_stamp_for(string? comment, string remote_path) {
+        if (comment == null)
+            return false;
+        string marker = "(%s)".printf(remote_path);
+        foreach (string block in comment.split("\n\n"))
+            if (block.strip().has_prefix(SHARE_STAMP_PREFIX) && block.contains(marker))
+                return true;
+        return false;
+    }
+
     // Extract the remote folder path recorded in a photo's share stamp, e.g.
     // "Shared via Nextcloud on 2026-11-22 01:15 (/Photos/Event A, Event B): …"
     // Returns null if the comment has no share stamp.
@@ -952,6 +970,37 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
                     publishables[i].get_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT)));
         }
 
+        // Events whose (selected) photos no longer have any share stamp lose their
+        // share stamp in the event comment as well.
+        string[] checked_events = {};
+        for (int i = 0; i < publishables.length && i < unpublished.length; i++) {
+            if (!unpublished[i])
+                continue;
+            string? ev_name = publishables[i].get_param_string(
+                Spit.Publishing.Publishable.PARAM_STRING_EVENTNAME);
+            if (ev_name == null || ev_name.strip() == "" || (ev_name in checked_events))
+                continue;
+            checked_events += ev_name;
+            bool any_stamp_left = false;
+            foreach (Spit.Publishing.Publishable q in publishables) {
+                string? qev = q.get_param_string(Spit.Publishing.Publishable.PARAM_STRING_EVENTNAME);
+                if (qev == ev_name
+                        && has_share_stamp(q.get_param_string(
+                            Spit.Publishing.Publishable.PARAM_STRING_COMMENT))) {
+                    any_stamp_left = true;
+                    break;
+                }
+            }
+            if (any_stamp_left)
+                continue;
+            string? ev_comment = publishables[i].get_param_string(
+                Spit.Publishing.Publishable.PARAM_STRING_EVENTCOMMENT);
+            if (has_share_stamp(ev_comment))
+                publishables[i].set_param_string(
+                    Spit.Publishing.Publishable.PARAM_STRING_EVENTCOMMENT,
+                    strip_share_stamps(ev_comment));
+        }
+
         // Stamp the published photos' comments with link + details (clipboard content).
         if (share_url != null) {
             var clip = new StringBuilder(share_url);
@@ -987,6 +1036,26 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
                     : old.strip() + "\n\n" + entry.str;
                 publishables[i].set_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT,
                     new_comment);
+            }
+
+            // The event of a newly published photo gets the same stamp (once per
+            // remote path) in its event comment.
+            string target_path = last_remote_path ?? remote_folder_path(folder_name);
+            string[] stamped_events = {};
+            for (int i = 0; i < publishables.length && i < published.length; i++) {
+                if (!published[i])
+                    continue;
+                string? ev_name = publishables[i].get_param_string(
+                    Spit.Publishing.Publishable.PARAM_STRING_EVENTNAME);
+                if (ev_name == null || ev_name.strip() == "" || (ev_name in stamped_events))
+                    continue;
+                stamped_events += ev_name;
+                string? ev_comment = publishables[i].get_param_string(
+                    Spit.Publishing.Publishable.PARAM_STRING_EVENTCOMMENT);
+                if (!has_stamp_for(ev_comment, target_path))
+                    publishables[i].set_param_string(
+                        Spit.Publishing.Publishable.PARAM_STRING_EVENTCOMMENT,
+                        append_stamp_block(ev_comment, entry.str));
             }
         }
 

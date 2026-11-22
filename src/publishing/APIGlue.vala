@@ -103,10 +103,17 @@ public class MediaSourcePublishableWrapper : Spit.Publishing.Publishable, GLib.O
     }
 
     public override void set_param_string(string name, string? value) {
-        // Currently only the comment is writable; persist it on the wrapped source.
+        // Currently only the (event) comment is writable; persist it on the
+        // wrapped source / its event.
         if (name == PARAM_STRING_COMMENT) {
             wrapped.set_comment(value);
             param_string.set(PARAM_STRING_COMMENT, value ?? "");
+        } else if (name == PARAM_STRING_EVENTCOMMENT) {
+            var event = wrapped.get_event();
+            if (event != null) {
+                event.set_comment(value);
+                param_string.set(PARAM_STRING_EVENTCOMMENT, value ?? "");
+            }
         }
     }
 
