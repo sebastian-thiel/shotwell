@@ -553,6 +553,13 @@ public interface Publishable : GLib.Object {
     public abstract string? get_param_string(string name);
 
     /**
+     * Sets a string value on the publishable corresponding with the parameter name
+     * provided. The default implementation does nothing; hosts may override this to
+     * persist changes (e.g. PARAM_STRING_COMMENT) back to the underlying media source.
+     */
+    public virtual void set_param_string(string name, string? value) {}
+
+    /**
      * Returns an array of strings that should be used to tag or mark this publishable on the
      * remote service, or null if this publishable has no tags or markings.
      */

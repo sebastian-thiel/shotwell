@@ -102,6 +102,14 @@ public class MediaSourcePublishableWrapper : Spit.Publishing.Publishable, GLib.O
         return param_string.get(name);
     }
 
+    public override void set_param_string(string name, string? value) {
+        // Currently only the comment is writable; persist it on the wrapped source.
+        if (name == PARAM_STRING_COMMENT) {
+            wrapped.set_comment(value);
+            param_string.set(PARAM_STRING_COMMENT, value ?? "");
+        }
+    }
+
     public string[] get_publishing_keywords() {
         string[] result = new string[0];
         
