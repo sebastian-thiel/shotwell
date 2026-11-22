@@ -163,26 +163,31 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         running = true;
         cancelled = false;
 
-        string folder_name = determine_folder_name();
-        pane = new OptionsPane(server_url, user, remote_base, lookup_password(), folder_name,
+        pane = new OptionsPane(server_url, user, remote_base, lookup_password(),
             expire_days, share_note, share_password);
-        pane.publish.connect(on_publish);
-        pane.remove_requested.connect(on_remove_clicked);
+        pane.action.connect(on_action_clicked);
         pane.browser_login.connect(on_browser_login);
         pane.remote_base_changed.connect(on_remote_base_changed);
         pane.expire_days_changed.connect(on_expire_days_changed);
         pane.share_note_changed.connect(on_share_note_changed);
         pane.share_password_changed.connect(on_share_password_changed);
-        update_button_sensitivity();
+        update_action_button();
         host.install_dialog_pane(pane);
     }
 
-    // Enable/disable Publish vs. Unpublish depending on the share stamps in the
-    // comments of the selected photos:
-    //  - no photo has a stamp    → only Publish
-    //  - all photos have a stamp → only Unpublish
-    //  - mixed selection         → both disabled, with a message in the pane
-    private void update_button_sensitivity() {
+    private enum ActionMode { PUBLISH, UNPUBLISH, MIXED }
+    private ActionMode action_mode = ActionMode.PUBLISH;
+
+    private void on_action_clicked() {
+        start_action();
+    }
+
+    // One single action button whose label and behavior depend on the share stamps
+    // in the comments of the selected photos:
+    //  - no photo has a stamp    → "Publish"
+    //  - all photos have a stamp → "Unpublish"
+    //  - mixed selection         → "Publish/Unpublish" (button stays enabled)
+    private void update_action_button() {
         bool any_shared = false;
         bool any_unshared = false;
         foreach (Spit.Publishing.Publishable p in host.get_publishables()) {
@@ -193,21 +198,21 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
                 any_unshared = true;
         }
 
+        pane.set_status("");
+        pane.set_action_sensitive(true);
         if (any_shared && any_unshared) {
-            pane.set_publish_sensitive(false);
-            pane.set_remove_sensitive(false);
-            pane.set_status(_("Mixed selection: some photos are already shared and some are "
-                + "not. Publish and Unpublish are both disabled — select either only shared "
-                + "or only unshared photos."));
+            action_mode = ActionMode.MIXED;
+            pane.set_action_label("Publish/Unpublish");
         } else if (any_shared) {
-            pane.set_publish_sensitive(false);
-            pane.set_remove_sensitive(true);
-            pane.set_status("");
+            action_mode = ActionMode.UNPUBLISH;
+            pane.set_action_label("Unpublish");
         } else {
-            pane.set_publish_sensitive(true);
-            pane.set_remove_sensitive(false);
-            pane.set_status("");
+            action_mode = ActionMode.PUBLISH;
+            pane.set_action_label("Publish");
         }
+        // Link settings only matter when (also) publishing — grey them out when
+        // the selection can only be unpublished.
+        pane.set_link_settings_sensitive(action_mode != ActionMode.UNPUBLISH);
     }
 
     public void stop() {
@@ -279,7 +284,10 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         host.set_config_string(CONFIG_SHARE_PASSWORD, value);
     }
 
-    private void on_publish() {
+    // Main thread entry point of the single action button. Every selected photo is
+    // published or unpublished INDIVIDUALLY, depending on whether its comment has a
+    // share stamp. Asks for confirmation first if any photo would be unpublished.
+    private void start_action() {
         server_url = pane.get_server_url().strip();
         user = pane.get_user().strip();
         remote_base = normalize_remote_base(pane.get_remote_base().strip());
@@ -302,18 +310,52 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         host.set_config_string(CONFIG_SHARE_PASSWORD, share_password);
         store_password(password);
 
+        var publishables = host.get_publishables();
+        int shared_count = 0;
+        foreach (Spit.Publishing.Publishable p in publishables)
+            if (has_share_stamp(p.get_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT)))
+                shared_count++;
+
+        // Confirmation only needed when something would be removed from the server.
+        if (shared_count > 0) {
+            string remote = remote_folder_path(determine_folder_name());
+            Gtk.Window? toplevel = pane.get_widget().get_toplevel() as Gtk.Window;
+            var dlg = new Gtk.MessageDialog(toplevel, Gtk.DialogFlags.MODAL,
+                Gtk.MessageType.WARNING, Gtk.ButtonsType.NONE,
+                _("Unpublish the already shared photos?"));
+            dlg.format_secondary_text(
+                _("%d of the %d selected photo(s) are already shared and will be removed "
+                  + "from their server folders (empty folders are deleted on the server, the "
+                  + "local share comment is removed). The remaining photo(s) will be published "
+                  + "to %s.").printf(shared_count, publishables.length, remote));
+            dlg.add_button(_("Cancel"), Gtk.ResponseType.CANCEL);
+            dlg.add_button(action_mode == ActionMode.MIXED ? "Publish/Unpublish" : "Unpublish",
+                Gtk.ResponseType.YES);
+            dlg.set_default_response(Gtk.ResponseType.CANCEL);
+            int response = dlg.run();
+            dlg.destroy();
+            if (response != Gtk.ResponseType.YES)
+                return;
+        }
+
         progress_reporter = host.serialize_publishables(0);
 
-        // The event folder can be edited in the pane; empty falls back to the event name.
-        string folder_name = sanitize_folder_name(pane.get_event_folder().strip());
+        string folder_name = determine_folder_name();
         last_remote_path = remote_folder_path(folder_name);
-        debug("Publishing to Nextcloud folder '%s' at %s", folder_name, server_url);
+        debug("Action on Nextcloud folder '%s' at %s", folder_name, server_url);
 
         host.set_service_locked(true);
-        host.install_static_message_pane(_("Uploading photos to Nextcloud…"),
+        string progress_msg;
+        if (action_mode == ActionMode.UNPUBLISH)
+            progress_msg = "Unpublishing from Nextcloud";
+        else if (action_mode == ActionMode.MIXED)
+            progress_msg = "Publishing/Unpublishing to/from Nextcloud";
+        else
+            progress_msg = "Publishing to Nextcloud";
+        host.install_static_message_pane(progress_msg,
             Spit.Publishing.PluginHost.ButtonMode.CANCEL);
 
-        new Thread<void>("nextcloud-upload", () => run_upload(folder_name, password));
+        new Thread<void>("nextcloud-action", () => run_action(folder_name, password));
     }
 
     internal static string normalize_remote_base(string raw) {
@@ -327,42 +369,17 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
         return path;
     }
 
-    // Strip the configured base folder prefix from a stamped remote path, so the
-    // result fits into the "Event folder" field (which is relative to the base).
-    private string folder_from_stamp_path(string stamp_path) {
-        string rb = normalize_remote_base(remote_base);
-        if (rb != "/" && stamp_path.has_prefix(rb + "/"))
-            return stamp_path.substring(rb.length + 1);
-        return stamp_path;
-    }
-
-    // Prefill for the "Event folder" field: the remote folders recorded in the
-    // share stamps of the selected photos (multiple different ones joined with
-    // "; "). If no photo has a stamp, fall back to all distinct event names of the
-    // selection, comma-separated (so photos from several events land in one folder
-    // named "Event A, Event B"); fallback "Shotwell". Commas and semicolons survive
-    // sanitize_folder_name.
+    // Folder name for publishing: all distinct event names of the selected photos
+    // that are NOT yet shared (no share stamp in their comment), comma-separated,
+    // so photos from several events land in one folder named "Event A, Event B".
+    // Already-shared photos are unpublished individually via their own stamp and do
+    // not influence the folder. Fallback: "Shotwell".
     private string determine_folder_name() {
         string[] seen = {};
         var sb = new StringBuilder();
-
         foreach (Spit.Publishing.Publishable p in host.get_publishables()) {
-            string? stamp_path = extract_stamp_path(
-                p.get_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT));
-            if (stamp_path == null)
+            if (has_share_stamp(p.get_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT)))
                 continue;
-            string folder = folder_from_stamp_path(stamp_path);
-            if (folder in seen)
-                continue;
-            seen += folder;
-            if (sb.len > 0)
-                sb.append("; ");
-            sb.append(folder);
-        }
-        if (sb.len > 0)
-            return sanitize_folder_name(sb.str);
-
-        foreach (Spit.Publishing.Publishable p in host.get_publishables()) {
             string? event_name = p.get_param_string(Spit.Publishing.Publishable.PARAM_STRING_EVENTNAME);
             if (event_name == null || event_name.strip() == "")
                 continue;
@@ -789,7 +806,21 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
     }
 
     // Runs in a worker thread; performs all network I/O synchronously.
-    private void run_upload(string folder_name, string password) {
+    // Each photo is handled INDIVIDUALLY based on its comment:
+    //  - share stamp present → unpublish (delete remote file, delete the remote
+    //    folder if it becomes empty)
+    //  - no stamp            → publish (upload into the event folder, then create or
+    //    reuse one public link share for that folder)
+    private void run_action(string folder_name, string password) {
+        var publishables = host.get_publishables();
+        bool[] unpublished = new bool[publishables.length];
+        bool[] published = new bool[publishables.length];
+        string[] not_found = {};
+        int uploaded = 0;
+        int unpublished_count = 0;
+        int failed = 0;
+        string[] touched_folders = {};
+        bool any_folder_deleted = false;
         string? share_url = null;
         string? error_message = null;
         share_reused = false;
@@ -798,194 +829,29 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
             var session = new Soup.SessionSync();
             session.timeout = 300;
 
-            string base_url = dav_base();
-            mkcol(session, base_url, password);
-            string folder_url = "%s/%s".printf(base_url, enc(folder_name));
-            mkcol(session, folder_url, password);
-
-            Spit.Publishing.Publishable[] publishables = host.get_publishables();
             int file_number = 0;
-            foreach (Spit.Publishing.Publishable p in publishables) {
+
+            // --- Phase 1: unpublish every photo that has a share stamp ---
+            for (int i = 0; i < publishables.length; i++) {
                 if (cancelled)
                     break;
-                file_number++;
-                GLib.File? file = p.get_serialized_file();
-                if (file == null)
+                Spit.Publishing.Publishable p = publishables[i];
+                string? comment = p.get_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT);
+                if (!has_share_stamp(comment))
                     continue;
-                string name = p.get_param_string(Spit.Publishing.Publishable.PARAM_STRING_BASENAME);
-                if (name == null || name == "")
-                    name = "photo-%d.jpg".printf(file_number);
-                put_file(session, "%s/%s".printf(folder_url, enc(name)), file, name, password);
-                report_progress(file_number, 1.0);
-            }
-
-            if (!cancelled)
-                share_url = create_share(session, remote_folder_path(folder_name), password);
-        } catch (Error e) {
-            error_message = e.message;
-        }
-
-        GLib.Idle.add(() => {
-            on_upload_finished(share_url, error_message);
-            return false;
-        });
-    }
-
-    // Runs on the main thread after the worker finished.
-    private void on_upload_finished(string? share_url, string? error_message) {
-        host.set_service_locked(false);
-
-        if (error_message != null) {
-            host.post_error(new Spit.Publishing.PublishingError.SERVICE_ERROR("%s", error_message));
-            return;
-        }
-
-        if (share_url == null || cancelled) {
-            host.post_error(new Spit.Publishing.PublishingError.SERVICE_ERROR(
-                _("Upload was cancelled.")));
-            return;
-        }
-
-        // Clipboard: always the link; expiry/password/note only when a NEW share
-        // was created with them — a reused existing share is left untouched, so
-        // its settings may differ from what the dialog showed.
-        var clip = new StringBuilder(share_url);
-        if (!share_reused) {
-            if (expire_days > 0)
-                clip.append_printf("\n%s: %s", _("Valid until"), expire_date());
-            if (share_password != "")
-                clip.append_printf("\n%s: %s", _("Password"), share_password);
-            if (share_note != "")
-                clip.append_printf("\n%s: %s", _("Note"), share_note);
-        }
-
-        // Remember on each local photo how it was shared: append the clipboard
-        // contents (link + expiry/password/note) to the photo's comment, keeping
-        // any existing comment text.
-        string stamp = new DateTime.now_local().format("%Y-%m-%d %H:%M");
-        var entry = new StringBuilder();
-        entry.append_printf("%s%s", SHARE_STAMP_PREFIX, stamp);
-        if (last_remote_path != null)
-            entry.append_printf(" (%s)", last_remote_path);
-        entry.append_printf(":\n%s", clip.str);
-        foreach (Spit.Publishing.Publishable p in host.get_publishables()) {
-            string? old = p.get_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT);
-            string new_comment = (old == null || old.strip() == "")
-                ? entry.str
-                : old.strip() + "\n\n" + entry.str;
-            p.set_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT, new_comment);
-        }
-
-        try {
-            var clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD);
-            clipboard.set_text(clip.str, -1);
-            clipboard.store();
-        } catch (Error e) {
-            debug("Could not copy link to clipboard: %s", e.message);
-        }
-
-        string escaped = GLib.Markup.escape_text(share_url);
-        string markup;
-        if (share_reused)
-            markup = _("The photos were uploaded to Nextcloud.\n\n"
-                + "The folder already had a public link share — the existing link was reused "
-                + "unchanged (no new link created, nothing overwritten) and copied to the "
-                + "clipboard:\n<a href=\"%s\">%s</a>").printf(escaped, escaped);
-        else {
-            markup = _("The photos were uploaded to Nextcloud and the folder was shared.\n\n"
-                + "Share link (link, expiry, password and note copied to the clipboard):\n"
-                + "<a href=\"%s\">%s</a>").printf(escaped, escaped);
-            if (expire_days > 0)
-                markup += "\n\n" + _("The link expires on %s.").printf(expire_date());
-            if (share_note != "")
-                markup += "\n" + _("Note for recipients: %s").printf(
-                    GLib.Markup.escape_text(share_note));
-            if (share_password != "")
-                markup += "\n" + _("Password: %s").printf(GLib.Markup.escape_text(share_password));
-        }
-        host.install_pango_message_pane(markup, Spit.Publishing.PluginHost.ButtonMode.CLOSE);
-    }
-
-    // --- Removing published photos from Nextcloud ---
-
-    // Main thread: validate input, ask for confirmation, then start the worker.
-    private void on_remove_clicked() {
-        server_url = pane.get_server_url().strip();
-        user = pane.get_user().strip();
-        remote_base = normalize_remote_base(pane.get_remote_base().strip());
-        string password = pane.get_password();
-
-        if (server_url == "" || user == "" || password == "") {
-            host.post_error(new Spit.Publishing.PublishingError.SERVICE_ERROR(
-                _("Server URL, user name and app password must all be set to remove photos.")));
-            return;
-        }
-
-        string folder_name = sanitize_folder_name(pane.get_event_folder().strip());
-        string remote = remote_folder_path(folder_name);
-        int count = host.get_publishables().length;
-
-        Gtk.Window? toplevel = pane.get_widget().get_toplevel() as Gtk.Window;
-        var dlg = new Gtk.MessageDialog(toplevel, Gtk.DialogFlags.MODAL,
-            Gtk.MessageType.WARNING, Gtk.ButtonsType.NONE,
-            _("Remove the selected photos from Nextcloud?"));
-        dlg.format_secondary_text(
-            _("The %d selected photo(s) will be deleted from their server folders "
-              + "(default: %s — each photo uses the folder recorded in its share comment). "
-              + "If a folder is empty afterwards, it will be deleted on the server as well. "
-              + "The local share comment will be removed from the photos.")
-                .printf(count, remote));
-        dlg.add_button(_("Cancel"), Gtk.ResponseType.CANCEL);
-        dlg.add_button("Unpublish", Gtk.ResponseType.YES);
-        dlg.set_default_response(Gtk.ResponseType.CANCEL);
-        int response = dlg.run();
-        dlg.destroy();
-        if (response != Gtk.ResponseType.YES)
-            return;
-
-        host.set_service_locked(true);
-        host.install_static_message_pane(_("Removing photos from Nextcloud…"),
-            Spit.Publishing.PluginHost.ButtonMode.CANCEL);
-
-        new Thread<void>("nextcloud-remove", () => run_remove(folder_name, password));
-    }
-
-    // Runs in a worker thread; performs all network I/O synchronously.
-    private void run_remove(string folder_name, string password) {
-        var publishables = host.get_publishables();
-        bool[] remove_ok = new bool[publishables.length];
-        string[] not_found = {};
-        int deleted = 0;
-        int failed = 0;
-        string[] touched_folders = {};
-        bool any_folder_deleted = false;
-        string? error_message = null;
-
-        try {
-            var session = new Soup.SessionSync();
-            session.timeout = 120;
-
-            int file_number = 0;
-            foreach (Spit.Publishing.Publishable p in publishables) {
-                if (cancelled)
-                    break;
                 file_number++;
                 string name = p.get_param_string(Spit.Publishing.Publishable.PARAM_STRING_BASENAME);
                 if (name == null || name == "")
                     name = "photo-%d.jpg".printf(file_number);
-
-                // Prefer the remote folder recorded in the photo's own share stamp
-                // (it may be a combined "Event A, Event B" folder); fall back to the
-                // folder shown in the pane.
-                string? stamp_path = extract_stamp_path(
-                    p.get_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT));
+                // Delete from the folder recorded in the photo's own share stamp
+                // (may be a combined "Event A, Event B" folder); fallback: event folder.
+                string? stamp_path = extract_stamp_path(comment);
                 string folder_path = stamp_path ?? remote_folder_path(folder_name);
-
                 DeleteResult res = delete_file(session,
                     dav_url_for_path(folder_path, name), password);
                 if (res == DeleteResult.DELETED) {
-                    remove_ok[file_number - 1] = true;
-                    deleted++;
+                    unpublished[i] = true;
+                    unpublished_count++;
                     if (!(folder_path in touched_folders))
                         touched_folders += folder_path;
                 } else if (res == DeleteResult.NOT_FOUND) {
@@ -996,9 +862,8 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
                 report_progress(file_number, 1.0);
             }
 
+            // Delete remote folders that became empty.
             if (!cancelled) {
-                // If the last photo(s) of a remote folder were removed, delete the
-                // folder on the server as well.
                 foreach (string fp in touched_folders) {
                     string furl = dav_url_for_path(fp, null);
                     int children = count_folder_children(session, furl, password);
@@ -1006,20 +871,59 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
                         any_folder_deleted = true;
                 }
             }
+
+            // --- Phase 2: publish every photo without a share stamp ---
+            bool any_unshared = false;
+            foreach (Spit.Publishing.Publishable p in publishables)
+                if (!has_share_stamp(p.get_param_string(
+                        Spit.Publishing.Publishable.PARAM_STRING_COMMENT)))
+                    any_unshared = true;
+
+            if (!cancelled && any_unshared) {
+                string base_url = dav_base();
+                mkcol(session, base_url, password);
+                string folder_url = "%s/%s".printf(base_url, enc(folder_name));
+                mkcol(session, folder_url, password);
+
+                for (int i = 0; i < publishables.length; i++) {
+                    if (cancelled)
+                        break;
+                    Spit.Publishing.Publishable p = publishables[i];
+                    if (has_share_stamp(p.get_param_string(
+                            Spit.Publishing.Publishable.PARAM_STRING_COMMENT)))
+                        continue;
+                    file_number++;
+                    GLib.File? file = p.get_serialized_file();
+                    if (file == null)
+                        continue;
+                    string name = p.get_param_string(Spit.Publishing.Publishable.PARAM_STRING_BASENAME);
+                    if (name == null || name == "")
+                        name = "photo-%d.jpg".printf(file_number);
+                    put_file(session, "%s/%s".printf(folder_url, enc(name)), file, name,
+                        password);
+                    uploaded++;
+                    published[i] = true;
+                    report_progress(file_number, 1.0);
+                }
+
+                if (!cancelled && uploaded > 0)
+                    share_url = create_share(session, remote_folder_path(folder_name), password);
+            }
         } catch (Error e) {
             error_message = e.message;
         }
 
         GLib.Idle.add(() => {
-            on_remove_finished(remove_ok, deleted, failed, not_found, any_folder_deleted,
-                folder_name, error_message);
+            on_action_finished(unpublished, published, uploaded, unpublished_count, failed,
+                not_found, any_folder_deleted, folder_name, share_url, error_message);
             return false;
         });
     }
 
-    // Runs on the main thread after the remove worker finished.
-    private void on_remove_finished(bool[] remove_ok, int deleted, int failed,
-        string[] not_found, bool folder_deleted, string folder_name, string? error_message) {
+    // Runs on the main thread after the worker finished.
+    private void on_action_finished(bool[] unpublished, bool[] published, int uploaded,
+        int unpublished_count, int failed, string[] not_found, bool folder_deleted,
+        string folder_name, string? share_url, string? error_message) {
         host.set_service_locked(false);
 
         if (error_message != null) {
@@ -1029,48 +933,116 @@ public class NextcloudPublisher : Spit.Publishing.Publisher, GLib.Object {
 
         if (cancelled) {
             host.post_error(new Spit.Publishing.PublishingError.SERVICE_ERROR(
-                _("Removal was cancelled.")));
+                _("Action was cancelled.")));
             return;
         }
 
-        // Remove the local share comment from every photo that was deleted remotely.
         var publishables = host.get_publishables();
-        for (int i = 0; i < publishables.length && i < remove_ok.length; i++) {
-            if (!remove_ok[i])
+
+        // Strip the share stamp from the comments of the unpublished photos.
+        for (int i = 0; i < publishables.length && i < unpublished.length; i++) {
+            if (!unpublished[i])
                 continue;
             publishables[i].set_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT,
                 strip_share_stamps(
                     publishables[i].get_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT)));
         }
 
-        // Photos that were not found in their remote folder (e.g. the pane folder
-        // only names one of several combined events) are reported as an error;
-        // their local share comment is kept.
-        if (not_found.length > 0) {
-            string msg = _("The following photo(s) were not found on the server and were "
-                + "NOT removed: %s").printf(string.joinv(", ", not_found));
-            if (deleted > 0)
-                msg = _("Removed %d photo(s) from Nextcloud.").printf(deleted) + "\n" + msg;
-            if (folder_deleted)
-                msg += "\n" + _("Empty remote folder(s) were deleted on the server.");
+        // Stamp the published photos' comments with link + details (clipboard content).
+        if (share_url != null) {
+            var clip = new StringBuilder(share_url);
+            if (!share_reused) {
+                if (expire_days > 0)
+                    clip.append_printf("\n%s: %s", _("Valid until"), expire_date());
+                if (share_password != "")
+                    clip.append_printf("\n%s: %s", _("Password"), share_password);
+                if (share_note != "")
+                    clip.append_printf("\n%s: %s", _("Note"), share_note);
+            }
+            try {
+                var clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD);
+                clipboard.set_text(clip.str, -1);
+                clipboard.store();
+            } catch (Error e) {
+                debug("Could not copy link to clipboard: %s", e.message);
+            }
+
+            string stamp = new DateTime.now_local().format("%Y-%m-%d %H:%M");
+            var entry = new StringBuilder();
+            entry.append_printf("%s%s", SHARE_STAMP_PREFIX, stamp);
+            if (last_remote_path != null)
+                entry.append_printf(" (%s)", last_remote_path);
+            entry.append_printf(":\n%s", clip.str);
+            for (int i = 0; i < publishables.length && i < published.length; i++) {
+                if (!published[i])
+                    continue;
+                string? old = publishables[i].get_param_string(
+                    Spit.Publishing.Publishable.PARAM_STRING_COMMENT);
+                string new_comment = (old == null || old.strip() == "")
+                    ? entry.str
+                    : old.strip() + "\n\n" + entry.str;
+                publishables[i].set_param_string(Spit.Publishing.Publishable.PARAM_STRING_COMMENT,
+                    new_comment);
+            }
+        }
+
+        // Nothing succeeded at all → error dialog.
+        if (uploaded == 0 && unpublished_count == 0 && (not_found.length > 0 || failed > 0)) {
+            string msg = not_found.length > 0
+                ? _("The following photo(s) were not found on the server and were NOT "
+                    + "removed: %s").printf(string.joinv(", ", not_found))
+                : _("%d file(s) could not be processed on the server.").printf(failed);
             host.post_error(new Spit.Publishing.PublishingError.SERVICE_ERROR("%s", msg));
             return;
         }
 
-        string remote = remote_folder_path(folder_name);
-        string markup;
-        if (folder_deleted)
-            markup = _("Removed %d photo(s) from Nextcloud.\n\n"
-                + "The folder %s was empty afterwards and has been deleted on the server "
-                + "(the share link no longer shows any content).\n"
-                + "The share comment was removed from the local photos.").printf(deleted, remote);
-        else
-            markup = _("Removed %d photo(s) from Nextcloud.\n\n"
-                + "The folder %s was kept on the server (it still contains files).\n"
-                + "The share comment was removed from the local photos.").printf(deleted, remote);
-        if (failed > 0)
-            markup += "\n\n" + _("%d file(s) could not be deleted on the server.").printf(failed);
-        host.install_pango_message_pane(markup, Spit.Publishing.PluginHost.ButtonMode.CLOSE);
+        // Combined result pane.
+        var sb = new StringBuilder();
+        if (uploaded > 0) {
+            sb.append_printf(_("Published %d photo(s) to %s.").printf(
+                uploaded, remote_folder_path(folder_name)));
+            if (share_url != null) {
+                string escaped = GLib.Markup.escape_text(share_url);
+                sb.append("\n\n");
+                if (share_reused)
+                    sb.append(_("The folder already had a public link share — the existing link "
+                        + "was reused unchanged (no new link created, nothing overwritten):"));
+                else
+                    sb.append(_("Share link (copied to the clipboard):"));
+                sb.append_printf("\n<a href=\"%s\">%s</a>", escaped, escaped);
+                if (!share_reused) {
+                    if (expire_days > 0)
+                        sb.append_printf("\n%s", _("The link expires on %s.").printf(expire_date()));
+                    if (share_note != "")
+                        sb.append_printf("\n%s", _("Note for recipients: %s").printf(
+                            GLib.Markup.escape_text(share_note)));
+                    if (share_password != "")
+                        sb.append_printf("\n%s", _("Password: %s").printf(
+                            GLib.Markup.escape_text(share_password)));
+                }
+            }
+        }
+        if (unpublished_count > 0) {
+            if (sb.len > 0)
+                sb.append("\n\n");
+            sb.append_printf(_("Unpublished %d photo(s): removed from Nextcloud, local share "
+                + "comment removed.").printf(unpublished_count));
+            if (folder_deleted)
+                sb.append_printf("\n%s", _("Empty remote folder(s) were deleted on the server "
+                    + "(their share link no longer shows content)."));
+        }
+        if (not_found.length > 0) {
+            if (sb.len > 0)
+                sb.append("\n\n");
+            sb.append_printf(_("Not found on the server (not removed): %s"),
+                GLib.Markup.escape_text(string.joinv(", ", not_found)));
+        }
+        if (failed > 0) {
+            if (sb.len > 0)
+                sb.append("\n\n");
+            sb.append_printf(_("%d file(s) could not be processed on the server."), failed);
+        }
+        host.install_pango_message_pane(sb.str, Spit.Publishing.PluginHost.ButtonMode.CLOSE);
     }
 
     private enum DeleteResult { DELETED, NOT_FOUND, FAILED }
@@ -1154,19 +1126,19 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
     private Gtk.Entry user_entry;
     private Gtk.Entry remote_base_entry;
     private Gtk.Entry password_entry;
-    private Gtk.Entry event_folder_entry;
+    private Gtk.Label link_headline;
+    private Gtk.Label expire_label;
     private Gtk.SpinButton expire_days_spin;
+    private Gtk.Label note_label;
     private Gtk.Entry note_entry;
+    private Gtk.Label share_password_label;
     private Gtk.Entry share_password_entry;
+    private Gtk.Button regen_button;
     private Gtk.Button browser_login_button;
     private Gtk.Label status_label;
-    private Gtk.Label target_label;
-    private Gtk.Button publish_button;
-    private Gtk.Button remove_button;
-    private string folder_name;
+    private Gtk.Button action_button;
 
-    public signal void publish();
-    public signal void remove_requested();
+    public signal void action();
     public signal void browser_login();
     public signal void remote_base_changed(string value);
     public signal void expire_days_changed(int value);
@@ -1174,8 +1146,7 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
     public signal void share_password_changed(string value);
 
     public OptionsPane(string server_url, string user, string remote_base, string? password,
-        string folder_name, int expire_days, string share_note, string share_password) {
-        this.folder_name = folder_name;
+        int expire_days, string share_note, string share_password) {
         box = new Gtk.Box(Gtk.Orientation.VERTICAL, 6);
         box.margin = 12;
 
@@ -1186,102 +1157,96 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
 
         add_headline(grid, 0, _("Server settings"));
 
+        Gtk.Label row_label;
         server_entry = add_row(grid, 1, _("Server URL:"), server_url,
-            "https://cloud.example.com");
+            "https://cloud.example.com", out row_label);
 
         browser_login_button = new Gtk.Button.with_label(_("Log in via browser…"));
         browser_login_button.clicked.connect(() => browser_login());
         browser_login_button.halign = Gtk.Align.START;
         grid.attach(browser_login_button, 1, 2, 1, 1);
 
-        user_entry = add_row(grid, 3, _("User name:"), user, "user");
+        user_entry = add_row(grid, 3, _("User name:"), user, "user", out row_label);
         password_entry = add_row(grid, 4, _("App password:"), password ?? "",
-            _("from browser login or the Nextcloud web UI"));
+            _("from browser login or the Nextcloud web UI"), out row_label);
         password_entry.set_visibility(false);
 
         remote_base_entry = add_row(grid, 5, _("Base folder:"), remote_base,
-            DEFAULT_REMOTE_BASE);
-        remote_base_entry.changed.connect(() => {
-            update_target_preview();
-            remote_base_changed(remote_base_entry.get_text());
-        });
+            DEFAULT_REMOTE_BASE, out row_label);
+        remote_base_entry.changed.connect(() =>
+            remote_base_changed(remote_base_entry.get_text()));
 
-        add_headline(grid, 6, _("Link settings"));
+        link_headline = add_headline(grid, 6, _("Link settings"));
 
-        // First entry in Link settings: the event folder, prefilled with the event
-        // name and editable.
-        event_folder_entry = add_row(grid, 7, _("Event folder:"), folder_name,
-            _("folder name on the server"));
-        event_folder_entry.changed.connect(() => update_target_preview());
-
-        var expire_label = new Gtk.Label(_("Link expires after (days):"));
+        expire_label = new Gtk.Label(_("Link expires after (days):"));
         expire_label.halign = Gtk.Align.END;
-        grid.attach(expire_label, 0, 8, 1, 1);
+        grid.attach(expire_label, 0, 7, 1, 1);
         expire_days_spin = new Gtk.SpinButton.with_range(0, MAX_EXPIRE_DAYS, 1);
         expire_days_spin.set_value(expire_days);
         expire_days_spin.set_tooltip_text(_("0 = never expires"));
         expire_days_spin.value_changed.connect(() =>
             expire_days_changed((int) expire_days_spin.get_value()));
-        grid.attach(expire_days_spin, 1, 8, 1, 1);
+        grid.attach(expire_days_spin, 1, 7, 1, 1);
 
-        note_entry = add_row(grid, 9, _("Note for recipients:"), share_note,
-            _("optional, shown on the public link page"));
+        note_entry = add_row(grid, 8, _("Note for recipients:"), share_note,
+            _("optional, shown on the public link page"), out note_label);
         note_entry.changed.connect(() => share_note_changed(note_entry.get_text()));
 
-        share_password_entry = add_row(grid, 10, _("Share password:"), share_password,
-            _("optional — leave empty for no password"));
+        share_password_entry = add_row(grid, 9, _("Share password:"), share_password,
+            _("optional — leave empty for no password"), out share_password_label);
         // Passwords are only generated explicitly via the button, never on focus.
         share_password_entry.changed.connect(() =>
             share_password_changed(share_password_entry.get_text()));
 
-        var regen_button = new Gtk.Button.with_label("🔄");
+        regen_button = new Gtk.Button.with_label("🔄");
         regen_button.set_tooltip_text(_("Generate a new random password"));
         regen_button.clicked.connect(() =>
             share_password_entry.set_text(NextcloudPublisher.generate_share_password()));
-        grid.attach(regen_button, 2, 10, 1, 1);
+        grid.attach(regen_button, 2, 9, 1, 1);
 
         status_label = new Gtk.Label("");
         status_label.halign = Gtk.Align.START;
         status_label.set_line_wrap(true);
         box.pack_start(status_label, false, false, 0);
 
-        target_label = new Gtk.Label("");
-        target_label.halign = Gtk.Align.START;
-        target_label.selectable = true;
-        box.pack_start(target_label, false, false, 0);
-        update_target_preview();
-
-        var hint = new Gtk.Label(_("The selected photos are uploaded into a folder named after "
-            + "the event. A public link share is created for that folder (opened in tile view) "
-            + "and copied to the clipboard."));
+        var hint = new Gtk.Label("The selected photo(s) will be published / unpublished based "
+            + "on the associated event(s). For the published photo(s) a public link share will be created "
+            + "and copied to the clipboard.");
         hint.set_line_wrap(true);
         hint.halign = Gtk.Align.START;
         box.pack_start(hint, false, false, 6);
 
-        publish_button = new Gtk.Button.with_label("Publish");
-        publish_button.clicked.connect(() => publish());
-        remove_button = new Gtk.Button.with_label("Unpublish");
-        remove_button.set_tooltip_text(_("Delete the selected photos from Nextcloud and "
-            + "remove the local share comment"));
-        remove_button.clicked.connect(() => remove_requested());
-        // [Publish][Remove] — Remove sits to the right of Publish.
-        var button_row = new Gtk.Box(Gtk.Orientation.HORIZONTAL, 6);
-        button_row.halign = Gtk.Align.END;
-        button_row.pack_end(remove_button, false, false, 0);
-        button_row.pack_end(publish_button, false, false, 0);
-        box.pack_start(button_row, false, false, 6);
+        // Single action button; label and behavior are set by the publisher
+        // depending on whether the selected photos are already shared.
+        action_button = new Gtk.Button.with_label("Publish");
+        action_button.clicked.connect(() => action());
+        action_button.halign = Gtk.Align.END;
+        box.pack_start(action_button, false, false, 6);
     }
 
-    private void add_headline(Gtk.Grid grid, int row, string text) {
+    private Gtk.Label add_headline(Gtk.Grid grid, int row, string text) {
         var label = new Gtk.Label("<b>%s</b>".printf(GLib.Markup.escape_text(text)));
         label.use_markup = true;
         label.halign = Gtk.Align.START;
         grid.attach(label, 0, row, 3, 1);
+        return label;
+    }
+
+    // Grey out the whole "Link settings" block (only relevant when publishing).
+    public void set_link_settings_sensitive(bool sensitive) {
+        link_headline.set_sensitive(sensitive);
+        expire_label.set_sensitive(sensitive);
+        expire_days_spin.set_sensitive(sensitive);
+        note_label.set_sensitive(sensitive);
+        note_entry.set_sensitive(sensitive);
+        share_password_label.set_sensitive(sensitive);
+        share_password_entry.set_sensitive(sensitive);
+        regen_button.set_sensitive(sensitive);
     }
 
     private Gtk.Entry add_row(Gtk.Grid grid, int row, string label_text, string value,
-        string placeholder) {
-        var label = new Gtk.Label(label_text);
+        string placeholder, out Gtk.Label label) {
+        label = new Gtk.Label(label_text);
         label.halign = Gtk.Align.END;
         grid.attach(label, 0, row, 1, 1);
         var entry = new Gtk.Entry();
@@ -1290,12 +1255,6 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
         entry.hexpand = true;
         grid.attach(entry, 1, row, 1, 1);
         return entry;
-    }
-
-    private void update_target_preview() {
-        target_label.set_text(_("Upload folder on the server: %s/%s").printf(
-            NextcloudPublisher.normalize_remote_base(remote_base_entry.get_text()),
-            NextcloudPublisher.sanitize_folder_name(event_folder_entry.get_text().strip())));
     }
 
     public string get_server_url() {
@@ -1308,10 +1267,6 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
 
     public string get_remote_base() {
         return remote_base_entry.get_text();
-    }
-
-    public string get_event_folder() {
-        return event_folder_entry.get_text();
     }
 
     public string get_password() {
@@ -1330,12 +1285,12 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
         status_label.set_text(text);
     }
 
-    public void set_publish_sensitive(bool sensitive) {
-        publish_button.set_sensitive(sensitive);
+    public void set_action_label(string label) {
+        action_button.set_label(label);
     }
 
-    public void set_remove_sensitive(bool sensitive) {
-        remove_button.set_sensitive(sensitive);
+    public void set_action_sensitive(bool sensitive) {
+        action_button.set_sensitive(sensitive);
     }
 
     public int get_expire_days() {
@@ -1359,8 +1314,8 @@ internal class OptionsPane : Spit.Publishing.DialogPane, GLib.Object {
     }
 
     public void on_pane_installed() {
-        publish_button.can_default = true;
-        publish_button.grab_default();
+        action_button.can_default = true;
+        action_button.grab_default();
     }
 
     public void on_pane_uninstalled() {
